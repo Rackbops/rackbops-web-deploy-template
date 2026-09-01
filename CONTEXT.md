@@ -1,4 +1,4 @@
-# rackbops-gated-deploy-template -- verified-facts ledger
+# rackbops-web-deploy-template -- verified-facts ledger
 
 The paid-for-once facts behind this template's scaffolds and runbooks. This repo is **derived** --
 every scaffold is a genericization of a real, running implementation -- so the ledger's job is to

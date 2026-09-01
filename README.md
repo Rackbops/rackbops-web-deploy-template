@@ -1,4 +1,4 @@
-# rackbops-gated-deploy-template
+# rackbops-web-deploy-template
 
 A copyable template for deploying a web thing **behind a Cloudflare-Access-gated loopback origin**,
 the same way every time. The distinctive, fully-shared spine — a container bound to `127.0.0.1`

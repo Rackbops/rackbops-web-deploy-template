@@ -1,4 +1,4 @@
-# rackbops-gated-deploy-template -- Claude Instructions
+# rackbops-web-deploy-template -- Claude Instructions
 
 A public, copyable **template repo** (shared tier, like `roshne/addon-ci`) for deploying a web
 thing behind a **Cloudflare-Access-gated loopback origin**. It ships `.example` scaffold files +
@@ -50,9 +50,11 @@ scrub every real value.
 
 ## Irreversible: the repo NAME is a shipped identifier
 
-Consumers reference this repo by name (`roshne/rackbops-gated-deploy-template`) in their own docs
+Consumers reference this repo by name (`roshne/rackbops-web-deploy-template`) in their own docs
 and in `Tooling`'s scaffold pointer. Renaming it breaks those references invisibly -- treat a
-rename as an escalation (create-new + redirect, per personal), not a casual change.
+rename as an escalation (create-new + redirect, per personal), not a casual change. (It was
+renamed once, gated- -> web-, right after creation while nothing yet consumed it -- the safe
+window; GitHub's redirect covers the old URL regardless.)
 
 ## Testing & checks
 
