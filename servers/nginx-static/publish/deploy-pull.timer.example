@@ -1,0 +1,17 @@
+# <app> auto-deploy -- polls GitHub for site updates by firing the paired .service on a schedule.
+#
+# Copy to `deploy/<app>-deploy.timer` in your app repo, adapt <app>, and install on the box as a
+# SYSTEM unit under /etc/systemd/system/ (paired with the .service; see this server's README).
+# `Persistent=true` catches up a missed run after the box was off. Tune OnUnitActiveSec to how
+# quickly you want a push to go live (5 min is the reference default; shorter polls GitHub more often).
+
+[Unit]
+Description=<app> -- poll GitHub for site updates
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

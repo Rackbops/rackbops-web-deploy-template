@@ -1,0 +1,19 @@
+# <app> auto-deploy -- oneshot service that runs deploy-pull.sh once.
+#
+# Copy to `deploy/<app>-deploy.service` in your app repo, adapt <app>/<user>/paths, and install
+# on the box as a SYSTEM unit under /etc/systemd/system/ (see this server's README). It runs as a
+# system unit but drops to <user> via User=/HOME= below -- that drop-to-user form is exactly why
+# it's a system unit, not a `--user` one (`systemctl --user` rejects User=). Paired with the
+# .timer, which schedules it. The service body stays privilege-light: no docker, no sudo -- it only
+# pulls and logs (installing the unit needs sudo; running it does not).
+
+[Unit]
+Description=<app> -- pull the latest site from GitHub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=<user>
+Environment=HOME=/home/<user>
+ExecStart=/bin/bash /opt/stacks/<app>/deploy/deploy-pull.sh

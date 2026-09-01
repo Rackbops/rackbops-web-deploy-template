@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# <app> auto-deploy -- pull the latest site from GitHub onto the box (pull model).
+#
+# Copy to `deploy/deploy-pull.sh` in your app repo and set REPO_DIR below. This is the PULL
+# publish model: the box holds a clone of the repo AS its Dockge stack (the repo root IS the stack
+# dir), and a systemd system timer (see the paired .service/.timer) runs this on a poll. Use it
+# when the repo can live on the box directly; use the scp push model (publish-scp.ps1) instead when
+# it can't (private repo, no box access). See README.md's "Push or pull?".
+#
+# The site is a read-only bind mount, so a content update needs no restart: nginx serves the new
+# files the instant the fast-forward lands. Only a compose.yaml change needs `docker compose up
+# -d`, which this logs as a reminder rather than doing unattended -- keeping the timer
+# privilege-light (no docker, no sudo).
+#
+# The whole body is wrapped in main() so bash parses it before running: a pull that updates this
+# very file mid-run can't trip over a half-read script.
+set -euo pipefail
+
+REPO_DIR="/opt/stacks/<app>"   # the clone-as-stack dir on the box
+
+main() {
+  cd "$REPO_DIR" || exit 1
+
+  local before after
+  before="$(git rev-parse HEAD)"
+  git pull --ff-only --quiet
+  after="$(git rev-parse HEAD)"
+
+  if [[ "$before" == "$after" ]]; then
+    echo "<app>: up to date at ${after:0:7}, nothing to do."
+    return 0
+  fi
+
+  echo "<app>: updated ${before:0:7} -> ${after:0:7}."
+
+  if git diff --quiet "$before" "$after" -- compose.yaml; then
+    echo "<app>: site content updated; no restart needed (nginx serves the mounted files)."
+  else
+    echo "<app>: compose.yaml changed -- run 'docker compose up -d' in $REPO_DIR to apply it."
+    # To apply compose changes automatically too, uncomment the next line
+    # (requires the timer's user to be in the 'docker' group):
+    # docker compose up -d
+  fi
+}
+
+main "$@"

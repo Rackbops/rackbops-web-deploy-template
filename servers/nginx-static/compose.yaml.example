@@ -1,0 +1,35 @@
+# <app> -- static site served by a stock nginx:alpine container, bound to loopback only.
+#
+# Copy to `compose.yaml` in your app repo and fill in the <PLACEHOLDERS>. Managed as a Dockge
+# stack at /opt/stacks/<app>/ on the box. There is NO custom image to build -- nginx:alpine is
+# used unmodified; the site is just files mounted read-only into its web root.
+#
+# The 127.0.0.1 bind is the security floor: nginx is reachable only over loopback, and the
+# Cloudflare Tunnel + Access gate sit in front of it (see ../../gate/README.md). If this ever binds 0.0.0.0
+# the site is exposed on the LAN with no auth -- don't.
+
+services:
+  <app>:
+    image: nginx:alpine
+    container_name: <app>
+    restart: unless-stopped
+    ports:
+      # "<HOST_PORT>:<CONTAINER_PORT>" -- both are yours to choose and they need NOT match.
+      #   * HOST_PORT: any free loopback port on the box (check `ss -ltnp` first). Must match the
+      #     tunnel ingress rule in ../../gate/README.md.
+      #   * CONTAINER_PORT: whatever nginx.conf's `listen` says. Keep it 80 (the stock default)
+      #     and there's nothing to change in nginx.conf; use a custom port only if you have a
+      #     reason to. (rackbops keeps 80; tools-site listens on 8793 -- both are fine.)
+      - "127.0.0.1:<HOST_PORT>:<CONTAINER_PORT>"
+    volumes:
+      # WEB-ROOT KNOB -- the left side is which local directory becomes nginx's web root. It is
+      # NOT always a subdir called `dist`/`site`:
+      #   * a build artifact:      ./dist:/usr/share/nginx/html:ro   (e.g. a Vite/React build)
+      #   * a hand-authored dir:   ./site:/usr/share/nginx/html:ro   (e.g. rackbops' one-pager)
+      #   * the REPO ROOT itself:  .:/usr/share/nginx/html:ro        (see note)
+      # Note: mount the repo root when index.html imports a SIBLING of its own dir -- e.g. a
+      # showcase whose `site/index.html` does `import "../styles/all.css"`: `styles/` is outside
+      # `site/`, so serving only `site/` 404s that import. Serving the repo root puts both under
+      # the web root and the parent-relative path resolves. (Real case: roshne/rackbops-ui-ux-std-lib.)
+      - <WEB_ROOT_DIR>:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro   # ships ONCE at setup; content updates never touch it

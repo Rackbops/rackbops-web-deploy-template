@@ -1,0 +1,108 @@
+<#
+.SYNOPSIS
+    Build a static site and publish it to a remote nginx container by scp (push model).
+
+.DESCRIPTION
+    Copy to `publish.ps1` in your app repo and adapt the CONFIG block below. This is the PUSH
+    publish model: build locally, then scp the output to the box's bind-mount directory. Use it
+    when the box cannot (or should not) hold a clone of the repo -- a private repo, or a box with
+    no repo access. If the box CAN clone the repo directly, prefer the pull model instead
+    (publish/deploy-pull.sh + the systemd timer units) -- see README.md's "Push or pull?".
+
+    No restart needed on the box: nginx reads files per request off the read-only mount. (A
+    `docker compose restart` is only needed when nginx.conf itself changes, which this never
+    ships.) If your build hashes asset filenames (Vite etc.), a fresh index.html always references
+    the assets that shipped alongside it, so there's no stale-asset window.
+
+    Publishes via a remote STAGING directory, not a direct scp into the live web-root dir:
+
+      1. scp the build into a throwaway "<dir>.new" next to the live dir. The network transfer --
+         the slow, failure-prone step -- happens here, and the live dir is untouched while it runs.
+      2. Only once that fully succeeds, swap it in with a single ssh call doing a local (same-host,
+         no-network) delete-then-copy -- so the window where the live dir is momentarily empty is
+         milliseconds, not however long an scp over the network takes.
+
+    Why this shape (all proven the hard way on the reference implementation, roshne/Tooling's
+    tools-site):
+      * A network blip or interrupted scp leaves the live site exactly as it was -- it never
+        empties the live dir with nothing to replace it.
+      * The live dir's own directory ENTRY is kept, never removed-and-recreated -- the container's
+        bind mount is a live reference to that directory; replacing the directory itself (vs. its
+        contents) risks orphaning the mount.
+      * scp's source is "<dir>/." (trailing dot), not "<dir>/": `scp -r <dir> host:existing-dir/`
+        NESTS (creates a "<dir>" folder inside the target) whenever the target already exists,
+        which the staging dir always does. The trailing-dot form copies the CONTENTS instead.
+      * Explicit $LASTEXITCODE checks after each native call: PowerShell only auto-throws on a
+        native nonzero exit under 7.4+ with $PSNativeCommandUseErrorActionPreference on. The
+        checks make failure loud on any pwsh.
+      * Uses only ordinary coreutils on the box (find, cp -a, rm -rf) -- no rsync (not always
+        installed).
+
+.PARAMETER Server
+    SSH target for the box (user@host).
+
+.PARAMETER RemoteDir
+    The app's stack directory on the box (holds compose.yaml + nginx.conf, shipped once at setup,
+    plus the web-root dir this script reships every run).
+
+.EXAMPLE
+    .\publish.ps1
+#>
+[CmdletBinding()]
+param(
+    [string] $Server = '<user>@<host>',
+    [string] $RemoteDir = '/opt/stacks/<app>'
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+# === CONFIG: adapt these two to your app ===
+$LocalDirName = 'dist'    # the build output dir under this repo (e.g. dist, build; or 'site' if there's no build)
+$RemoteDirName = 'dist'   # the web-root dir name under $RemoteDir on the box
+# ===========================================
+
+$localPath = Join-Path $PSScriptRoot $LocalDirName
+
+# === BUILD: adapt (or delete) this block ===
+# The reference implementation (tools-site) runs `npm run build --prefix $PSScriptRoot`, which
+# runs the build with its cwd set to this repo regardless of where you invoke the script from.
+# Replace the command to match your build; DELETE the whole block if the site is prebuilt or has
+# no build step (e.g. a hand-authored one-pager). Keep the $LASTEXITCODE check so a failed build
+# never publishes a stale/empty output.
+Write-Output "Building (npm run build)..."
+& npm run build --prefix $PSScriptRoot
+if ($LASTEXITCODE -ne 0) {
+    throw "build failed (exit $LASTEXITCODE)"
+}
+# ===========================================
+
+$localIndex = Join-Path $localPath 'index.html'
+if (-not (Test-Path -LiteralPath $localIndex -PathType Leaf)) {
+    throw "No $LocalDirName/index.html at $localIndex -- refusing to publish an empty/incomplete build"
+}
+
+$remoteLive    = "$RemoteDir/$RemoteDirName"
+$remoteStaging = "$RemoteDir/$RemoteDirName.new"
+
+Write-Output "Staging at $Server`:$remoteStaging..."
+& ssh $Server "rm -rf '$remoteStaging' && mkdir -p '$remoteStaging'"
+if ($LASTEXITCODE -ne 0) {
+    throw "ssh staging setup at '$remoteStaging' on $Server failed (exit $LASTEXITCODE)"
+}
+
+$stagingTarget = "${Server}:${remoteStaging}/"
+Write-Output "Copying $localPath -> $stagingTarget"
+& scp -r (Join-Path $localPath '.') $stagingTarget
+if ($LASTEXITCODE -ne 0) {
+    throw "scp to $stagingTarget failed (exit $LASTEXITCODE) -- the live site at '$remoteLive' was not touched"
+}
+
+Write-Output "Swapping the staged build into $Server`:$remoteLive (local copy on the box, no network)..."
+& ssh $Server "mkdir -p '$remoteLive' && find '$remoteLive' -mindepth 1 -delete && cp -a '$remoteStaging'/. '$remoteLive'/ && rm -rf '$remoteStaging'"
+if ($LASTEXITCODE -ne 0) {
+    throw "swap into '$remoteLive' on $Server failed (exit $LASTEXITCODE) -- live site may be inconsistent; re-run this script"
+}
+
+Write-Output "Published. Content-only changes are live immediately -- no restart needed."
+Write-Output "(A restart is only required when nginx.conf changes, which this script never ships.)"

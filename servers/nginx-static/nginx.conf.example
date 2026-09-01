@@ -1,0 +1,44 @@
+# <app> -- served by nginx:alpine. Copy to `nginx.conf` in your app repo and adapt.
+#
+# Mounted at /etc/nginx/conf.d/default.conf -- despite the name you may give it, this is a
+# `server {}` FRAGMENT, not a full nginx.conf: the base image's real nginx.conf already supplies
+# http{}/events{} and includes conf.d/*.conf. Content-free by design -- ships to the box ONCE at
+# setup; the publish step (scp or git-pull) never touches it. When you DO change it, the running
+# container must reload it (`docker compose restart <app>`, or `nginx -s reload`) -- unlike site
+# content, which is served live off the read-only mount with no restart.
+server {
+    # Match compose.yaml's CONTAINER_PORT. 80 is the stock default (keep it unless you have a
+    # reason not to); a custom port here (e.g. 8793) must equal the right-hand side of the
+    # "127.0.0.1:<HOST_PORT>:<CONTAINER_PORT>" publish.
+    listen 80;
+
+    root  /usr/share/nginx/html;
+    index index.html;
+
+    # Liveness probe -- exact match, so it never falls through to the fallback below. Optional but
+    # cheap; a co-located uptime monitor or a deploy healthcheck can hit it. (tools-site has this;
+    # rackbops does not -- keep it or delete it.)
+    location = /healthz {
+        return 200;
+    }
+
+    # === Pick ONE `location /` block for your site type; delete the other. ===
+
+    # (A) SPA / client-side-routed build (React + Vite, etc.): every unknown path falls back to
+    #     index.html so the client router can take over. Use this for a built app like tools-site.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # (B) Plain static HTML (hand-authored pages, no client router): a real 404 for unknown paths,
+    #     optionally rendered by your own 404 page. Use this for a site like rackbops. To enable,
+    #     delete block (A) above and uncomment this one.
+    #
+    # location / {
+    #     try_files $uri $uri/ =404;
+    # }
+    # error_page 404 /404.html;
+    # location = /404.html {
+    #     internal;
+    # }
+}
