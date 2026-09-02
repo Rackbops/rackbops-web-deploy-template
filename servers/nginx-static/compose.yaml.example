@@ -32,4 +32,4 @@ services:
       # `site/`, so serving only `site/` 404s that import. Serving the repo root puts both under
       # the web root and the parent-relative path resolves. (Real case: roshne/rackbops-ui-ux-std-lib.)
       - <WEB_ROOT_DIR>:/usr/share/nginx/html:ro
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro   # ships ONCE at setup; content updates never touch it
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro   # scp push never re-ships this; git-pull ships whatever you commit (see nginx.conf.example)

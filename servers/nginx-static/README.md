@@ -90,8 +90,14 @@ asset the page references under the web root.
 - **Content** — via your chosen publish mechanism above. Served live off the read-only mount;
   **no restart needed** (nginx re-reads files per request; hashed asset filenames mean a fresh
   `index.html` always references the assets that shipped with it).
-- **`nginx.conf`** — re-copy it to the stack dir and `docker compose restart <app>` (or `nginx -s
-  reload`). This is the ONE change that needs a restart; the publish scripts never ship it.
+- **`nginx.conf`** — always needs `docker compose restart <app>` to take effect; this is the ONE
+  change that needs a restart. How it reaches the box differs by model: the scp push never
+  re-ships it (re-copy it to the stack dir by hand, then restart); the git-pull model ships
+  whatever you commit, and `deploy-pull.sh`'s diff check flags a `nginx.conf` change with the
+  restart reminder in its log. Either way, do NOT rely on `nginx -s reload` after a pull -- `git
+  checkout` replaces the file via a new inode, and Docker's single-file bind mount keeps watching
+  the old one, so a reload silently keeps serving the stale config. `reload` is fine after an
+  in-place scp/cp, which overwrites the file rather than replacing it.
 
 ## SPA vs. plain static
 
