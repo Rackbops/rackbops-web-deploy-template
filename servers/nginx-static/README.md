@@ -80,10 +80,36 @@ disable --now <app>-deploy.timer`. (Prefer cron? One line polls without the syst
 ## Web-root knob
 
 `compose.yaml`'s content mount is not always a `dist`/`site` subdir — it's whichever local dir
-should become nginx's web root, and that includes the **repo root itself** when `index.html`
-imports a sibling of its own directory (e.g. a `site/index.html` that does `import
-"../styles/all.css"` — serving only `site/` would 404 that import). Pick the mount that puts every
-asset the page references under the web root.
+should become nginx's web root. Three choices:
+
+- a build artifact dir (`./dist`, `./build`)
+- a hand-authored dir (`./site`)
+- the **repo root itself** (`.`) — mount it when `index.html` imports a sibling of its own
+  directory (e.g. a `site/index.html` that does `import "../styles/all.css"` — serving only
+  `site/` would 404 that import) and putting the whole tree under the web root is the only way to
+  reach both.
+
+Pick the mount that puts every asset the page references under the web root.
+
+**The repo-root mount is pull-model only** — the push model's `publish-scp.ps1` refuses to target
+it (`$LocalDirName` can't be `.`); only a pull-model box's clone doubles as both the stack dir and
+the web root. **It's also currently inferred, not extracted from a running deployment** — no
+consumer in this repo's "Known consumers" table runs it yet, per this repo's ground-truth rule.
+Two consequences to know before using it:
+
+- It serves EVERYTHING in the clone unless `nginx.conf` denies it — `.git/`, `compose.yaml`,
+  `nginx.conf`, `deploy/*.service`, all of it. `nginx.conf.example` denies these by default
+  (dotfiles, `compose.yaml`, `nginx.conf`, `deploy/`) — don't remove those blocks if you use this
+  mount.
+- `/` needs something to actually resolve to: `try_files` finds nothing for a bare `/` unless a
+  root `index.html` exists (a `site/index.html` is not `/index.html`). Either add a root
+  `index.html` (e.g. one that redirects into your real entry point), or add
+  `location = / { return 302 /site/; }` (adjust the path) — otherwise a gated visitor hits nginx's
+  bare 403 at `/` with no indication where the real site lives. With the SPA fallback variant (A)
+  of `nginx.conf.example` active, a missing root `index.html` is worse than a 403 at `/` alone: ANY
+  unmatched path also 500s (nginx's `try_files ... /index.html` fallback tries to internally
+  redirect to the still-missing `/index.html` and loops until nginx aborts the request) — one more
+  reason to add the root `index.html`/redirect above rather than leave it unresolved.
 
 ## Updating
 

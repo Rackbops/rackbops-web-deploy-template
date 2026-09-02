@@ -27,6 +27,22 @@ server {
         return 200;
     }
 
+    # Deny dotfiles/dirs (.git, .env, ...) except /.well-known/ (ACME challenges etc.) -- matters
+    # most for the repo-root web-root mount (see README's "Web-root knob"), where .git/ would
+    # otherwise be directly readable; harmless elsewhere since these paths won't exist under a
+    # ./dist or ./site mount. `return 404` (not `deny all`) is what actually applies here -- it
+    # fires in nginx's rewrite phase, before the access-phase `deny` would even run.
+    location ~ /\.(?!well-known/) {
+        return 404;
+    }
+    # Same reasoning, for the repo-root-level stack files a repo-root mount would also expose.
+    # Exact/prefix match, not directory-wide like the dotfile rule above -- a same-named file
+    # elsewhere in the tree (e.g. a docs copy at /some/nginx.conf) is a different, ordinary file
+    # and is untouched by these.
+    location = /compose.yaml { return 404; }
+    location = /nginx.conf   { return 404; }
+    location ^~ /deploy/     { return 404; }
+
     # === Pick ONE `location /` block for your site type; delete the other. ===
 
     # (A) SPA / client-side-routed build (React + Vite, etc.): every unknown path falls back to
