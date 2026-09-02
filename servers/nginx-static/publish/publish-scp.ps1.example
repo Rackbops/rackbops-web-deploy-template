@@ -32,6 +32,15 @@
       * scp's source is "<dir>/." (trailing dot), not "<dir>/": `scp -r <dir> host:existing-dir/`
         NESTS (creates a "<dir>" folder inside the target) whenever the target already exists,
         which the staging dir always does. The trailing-dot form copies the CONTENTS instead.
+      * $LocalDirName/$RemoteDirName/$RemoteDir are validated against an allowlist before anything
+        runs -- an unrestricted value (a stray '..', a '/' where a single dir name is expected, or
+        even just a "'" that could break out of the quoting in the remote command strings below)
+        could either resolve the live/staging paths onto the stack dir itself and have the swap
+        delete compose.yaml/nginx.conf/deploy/, or inject an arbitrary command on the box. Rejected
+        loudly, before any ssh/scp call.
+      * The swap verifies the staged build actually holds a site (`index.html` present) before
+        touching the live dir -- an scp that exits 0 with an unexpected layout (nesting, a
+        modified call site) refuses instead of wiping the live tree for nothing.
       * Explicit $LASTEXITCODE checks after each native call: PowerShell only auto-throws on a
         native nonzero exit under 7.4+ with $PSNativeCommandUseErrorActionPreference on. The
         checks make failure loud on any pwsh.
@@ -59,8 +68,37 @@ $ErrorActionPreference = 'Stop'
 
 # === CONFIG: adapt these two to your app ===
 $LocalDirName = 'dist'    # the build output dir under this repo (e.g. dist, build; or 'site' if there's no build)
-$RemoteDirName = 'dist'   # the web-root dir name under $RemoteDir on the box
+$RemoteDirName = 'dist'   # the web-root dir name under $RemoteDir on the box -- a single subdirectory
+                          # name, never the stack dir itself or the repo root (push cannot target
+                          # either; the repo-root mount is pull-only)
 # ===========================================
+
+# Allowlist, not a blocklist: $RemoteDirName/$LocalDirName/$RemoteDir all end up single-quoted
+# inside the remote command strings below (e.g. '$remoteLive'), so a stray "'" -- not just '/' or
+# '\' -- would break out of that quoting and inject an arbitrary remote command. Restricting to
+# a closed character set closes that off instead of trying to blocklist every shell metacharacter.
+function Assert-SafeName {
+    param([string] $Name, [string] $Value, [switch] $AllowSlash)
+    if ($AllowSlash) {
+        $ok = $Value -match '^/?[A-Za-z0-9](?:[A-Za-z0-9._/-]*[A-Za-z0-9])?$'
+        $allowed = "letters, digits, '.', '_', '-', '/'"
+        # The character class alone doesn't forbid a '..' PATH SEGMENT (e.g. '/opt/../etc') --
+        # check each '/'-separated segment explicitly so a traversal can't hide inside an
+        # otherwise-legal string.
+        if ($ok -and ($Value -split '/' | Where-Object { $_ -eq '..' })) {
+            $ok = $false
+        }
+    } else {
+        $ok = $Value -match '^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$'
+        $allowed = "letters, digits, '.', '_', '-' (no '/' or '\')"
+    }
+    if (-not $ok) {
+        throw "`$$Name is '$Value' -- must contain only $allowed, start/end with a letter or digit, and contain no '..' path segment (no quotes, spaces, or other characters a remote shell could interpret)"
+    }
+}
+Assert-SafeName -Name 'LocalDirName' -Value $LocalDirName
+Assert-SafeName -Name 'RemoteDirName' -Value $RemoteDirName
+Assert-SafeName -Name 'RemoteDir' -Value $RemoteDir -AllowSlash
 
 $localPath = Join-Path $PSScriptRoot $LocalDirName
 
@@ -99,9 +137,18 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Output "Swapping the staged build into $Server`:$remoteLive (local copy on the box, no network)..."
-& ssh $Server "mkdir -p '$remoteLive' && find '$remoteLive' -mindepth 1 -delete && cp -a '$remoteStaging'/. '$remoteLive'/ && rm -rf '$remoteStaging'"
+& ssh $Server "test -f '$remoteStaging/index.html' && mkdir -p '$remoteLive' && find '$remoteLive' -mindepth 1 -delete && cp -a '$remoteStaging'/. '$remoteLive'/"
 if ($LASTEXITCODE -ne 0) {
-    throw "swap into '$remoteLive' on $Server failed (exit $LASTEXITCODE) -- live site may be inconsistent; re-run this script"
+    throw "swap into '$remoteLive' on $Server failed (exit $LASTEXITCODE) -- either the staged build failed verification (live site untouched) or the swap failed partway (live site may be inconsistent); the staged build is left at '$remoteStaging' on the box -- inspect it, then re-run this script"
+}
+
+# Cleanup is deliberately a separate, non-fatal call: by this point the live dir is already
+# correct, so a failure here (e.g. a transient permission issue) must not be reported as "the
+# swap may be inconsistent" -- it's just a leftover staging dir, harmless and self-cleaned by the
+# next publish's staging setup above.
+& ssh $Server "rm -rf '$remoteStaging'"
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "Published, but cleanup of '$remoteStaging' on $Server failed (exit $LASTEXITCODE) -- the live site is correct; the leftover staging dir is harmless and will be replaced by the next publish."
 }
 
 Write-Output "Published. Content-only changes are live immediately -- no restart needed."
