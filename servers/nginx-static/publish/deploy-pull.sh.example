@@ -7,10 +7,13 @@
 # when the repo can live on the box directly; use the scp push model (publish-scp.ps1) instead when
 # it can't (private repo, no box access). See README.md's "Push or pull?".
 #
-# The site is a read-only bind mount, so a content update needs no restart: nginx serves the new
-# files the instant the fast-forward lands. Only a compose.yaml change needs `docker compose up
-# -d`, which this logs as a reminder rather than doing unattended -- keeping the timer
-# privilege-light (no docker, no sudo).
+# The site is a read-only bind mount, so a content-only update needs no restart: nginx serves the
+# new files the instant the fast-forward lands. compose.yaml, nginx.conf, and deploy/*.service|
+# .timer changes each need a different action on the box (a `docker compose up`, a container
+# restart, or a systemd daemon-reload) -- the clone IS the stack dir in this model, so a pull
+# ships whatever you commit to any of them. This script diffs the pull and logs the exact action
+# needed as a reminder rather than doing it unattended -- keeping the timer privilege-light (no
+# docker, no sudo).
 #
 # The whole body is wrapped in main() so bash parses it before running: a pull that updates this
 # very file mid-run can't trip over a half-read script.
@@ -33,14 +36,53 @@ main() {
 
   echo "<app>: updated ${before:0:7} -> ${after:0:7}."
 
-  if git diff --quiet "$before" "$after" -- compose.yaml; then
-    echo "<app>: site content updated; no restart needed (nginx serves the mounted files)."
-  else
-    echo "<app>: compose.yaml changed -- run 'docker compose up -d' in $REPO_DIR to apply it."
-    # To apply compose changes automatically too, uncomment the next line
-    # (requires the timer's user to be in the 'docker' group):
-    # docker compose up -d
-  fi
+  # Path-to-action map, not a single compose.yaml special case: each of these needs a DIFFERENT
+  # action on the box, and more than one can be true in the same pull. `git diff --name-only`
+  # returns paths relative to the repo root, matching these patterns as-is since we already `cd`'d
+  # into $REPO_DIR above.
+  local changed_files needs_up=0 needs_restart=0 needs_reload_units=0 content_only=1
+  # --no-renames: git's default rename detection would otherwise collapse a renamed
+  # compose.yaml/nginx.conf/unit file down to just its NEW path in --name-only output, so the old
+  # name never appears here and the change silently falls through as content-only.
+  changed_files="$(git diff --no-renames --name-only "$before" "$after")"
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    case "$f" in
+      compose.yaml)
+        needs_up=1
+        content_only=0
+        ;;
+      nginx.conf)
+        needs_restart=1
+        content_only=0
+        ;;
+      # Note: the * here also matches a nested path like deploy/sub/app.service, not just a flat
+      # deploy/<name>.service -- accepted over-match (still correctly flags a systemd-unit-shaped
+      # file as needing a re-copy + daemon-reload, just occasionally for a file that isn't actually
+      # an installed unit) rather than a fragile extglob to anchor it to one path segment.
+      deploy/*.service|deploy/*.timer)
+        needs_reload_units=1
+        content_only=0
+        ;;
+    esac
+  done <<< "$changed_files"
+
+  (( needs_up )) && echo "<app>: compose.yaml changed -- run 'docker compose up -d' in $REPO_DIR to apply it."
+  # NOT `nginx -s reload`: a pull's `git checkout` replaces nginx.conf via a new inode (unlink +
+  # create), and Docker's single-file bind mount keeps watching the OLD inode -- a reload after a
+  # pull silently keeps serving the stale config. Only a restart re-resolves the host path.
+  (( needs_restart )) && echo "<app>: nginx.conf changed -- run 'docker compose restart <app>' in $REPO_DIR to apply it (a reload will NOT pick this up after a pull; see the server README)."
+  (( needs_reload_units )) && echo "<app>: a deploy/*.service or *.timer unit changed -- re-copy it to /etc/systemd/system/ and run 'sudo systemctl daemon-reload' to apply it."
+  (( content_only )) && echo "<app>: site content updated; no restart needed (nginx serves the mounted files)."
+  # To apply compose.yaml changes automatically too, uncomment the next line
+  # (requires the timer's user to be in the 'docker' group):
+  # (( needs_up )) && docker compose up -d
+
+  # Explicit success exit: the four `(( flag )) && echo` checks above each have their OWN exit
+  # status of 1 when that flag is false (the echo never runs to overwrite it), so without this the
+  # script's exit code would depend on which flag happened to be checked last -- reporting failure
+  # to systemd (and every deploy log) on a run that actually succeeded.
+  return 0
 }
 
-main "$@"
+main
