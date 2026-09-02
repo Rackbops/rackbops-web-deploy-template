@@ -9,9 +9,11 @@
 Description=<app> -- poll GitHub for site updates
 
 [Timer]
-# Explicit, not relying on the default same-stem pairing (foo.timer -> foo.service): if you rename
-# only one half of this pair when copying it into deploy/, an implicit pairing would silently break
-# `systemctl enable --now`. Keep this in sync with whatever you rename the .service file to.
+# Explicit, not relying on the default same-stem pairing (foo.timer -> foo.service), so the file
+# says which service it fires and the two halves need not share a stem. This does NOT make a
+# mis-pairing quieter: if the named service isn't installed, starting the timer fails its job
+# outright, logging "Refusing to start, unit <x>.service to trigger not loaded" to the journal --
+# same as the implicit pairing would. Keep this in sync with whatever you name the .service file.
 Unit=<app>-deploy.service
 OnBootSec=2min
 OnUnitActiveSec=5min

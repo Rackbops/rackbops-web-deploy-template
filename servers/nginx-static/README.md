@@ -18,27 +18,57 @@ same shared [`gate/`](../../gate/).
 ## Bring it up on the box
 
 How the stack dir gets populated differs by model (see "Push or pull?" below for which applies to
-you) — pick the matching block. Either way, `compose.yaml` + `nginx.conf` end up in place once, and
-only the web-root content gets reshipped per update — for the pull model, `nginx.conf` and
-`deploy/` can also change on a later pull; see "Updating" below for what that requires.
+you) — pick the matching block. In the push model, `compose.yaml` + `nginx.conf` are shipped once
+at setup and only the web-root content is reshipped per update. In the pull model everything
+arrives with the clone, and a later pull ships whatever you committed — content, `nginx.conf`,
+`compose.yaml`, or the `deploy/` units — see "Updating" below for what each of those requires.
 
 ### Pull model: clone as `<user>`, not root
 
+First commit + push the adapted `compose.yaml`, `nginx.conf`, and `deploy/` files to the app repo —
+the box only ever gets what's on the branch it clones. Then:
+
 ```bash
-# on the box
+# on the box, logged in as <user> -- the account the service's User= line names
 sudo mkdir -p /opt/stacks/<app>
 sudo chown <user>:<user> /opt/stacks/<app>
-sudo -u <user> git clone <your-repo-url> /opt/stacks/<app>
+git clone <REPO_URL> /opt/stacks/<app>       # as <user>, into the still-EMPTY dir
+# (private repo? do the deploy-key setup below FIRST, then clone through its alias instead)
 ```
 
 `compose.yaml`, `nginx.conf`, and `deploy/` all arrive with the clone — there's nothing to copy in
-separately. Cloning AS `<user>` matters: the timer's `User=<user>` service runs `git pull` as
-`<user>`, and a clone owned by a different user trips git's `dubious ownership` check on every run
-(cloning as root then `chown`-ing after also works, but only with `chown -R`, which is easy to
-forget and leaves no obvious symptom until the timer starts failing). For a private repo, set up a
-read-only deploy key (or an SSH config `Host` alias) for `<user>` *before* cloning, so this clone
-and every later `git pull` can authenticate non-interactively. Never commit on the box — the
-timer's `git pull --ff-only` assumes a clean working tree.
+separately, and nothing may be copied in *before* it: `git clone` refuses a non-empty destination
+(`destination path already exists and is not an empty directory`). Cloning AS `<user>` matters: the
+timer's `User=<user>` service runs `git pull` as `<user>`, and a clone owned by a different user
+trips git's `dubious ownership` check on every run (cloning as root then `chown`-ing after also
+works, but only with `chown -R`, which is easy to forget and leaves no obvious symptom until the
+timer starts failing). If you're logged in as some other account, run the clone as `<user>` with
+`sudo -u <user> -H git clone ...` (`-H` sets `HOME` to `<user>`'s, matching the service's
+`Environment=HOME=` line).
+
+For a **private repo**, give `<user>` a read-only deploy key *before* cloning, so this clone and
+every later `git pull` authenticate non-interactively:
+
+```bash
+# on the box, as <user> -- a key just for this repo, plus a host alias that scopes it to this repo
+ssh-keygen -t ed25519 -f ~/.ssh/<app>_deploy -N "" -C "<app> deploy key"
+cat ~/.ssh/<app>_deploy.pub    # add at github.com/<OWNER>/<REPO> -> Settings -> Deploy keys,
+                               # with "Allow write access" UNCHECKED (pull-only)
+cat >> ~/.ssh/config <<'EOF'
+
+Host github-<app>
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/<app>_deploy
+  IdentitiesOnly yes
+EOF
+chmod 600 ~/.ssh/config
+# then the mkdir + chown lines above, and clone through the alias in place of <REPO_URL>:
+git clone git@github-<app>:<OWNER>/<REPO>.git /opt/stacks/<app>
+```
+
+Never commit on the box: once `main` moves past a commit made here, the timer's `git pull
+--ff-only` refuses (loudly, in the journal) rather than merging — the box is a pure consumer.
 
 ### Push model: mkdir, then scp
 
@@ -46,10 +76,12 @@ timer's `git pull --ff-only` assumes a clean working tree.
 # on the box
 sudo mkdir -p /opt/stacks/<app>
 sudo chown <user>:<user> /opt/stacks/<app>   # so publish-scp.ps1 can write here as <user>, not root
-# copy compose.yaml and nginx.conf into /opt/stacks/<app>/ by hand (scp, or paste via Dockge)
+# copy compose.yaml and nginx.conf into /opt/stacks/<app>/ by hand (scp them from your machine)
 ```
 
-Then run `publish-scp.ps1` once to ship the initial build into the (now-existing) web-root dir.
+Then run `publish-scp.ps1` once from your machine to ship the initial build. The script creates the
+web-root dir under the stack dir itself (its swap step does `mkdir -p`), so there's nothing to
+pre-create.
 
 ### Both models, once the stack dir is populated
 
@@ -70,7 +102,8 @@ The one real fork in how new content reaches the box. Both end with nginx servin
 read-only mount; they differ only in transport:
 
 - **Push (`publish-scp.ps1`)** — build on your machine, scp the output to the box. Use when the box
-  **cannot or should not hold a clone** of the repo: a private repo, or a box with no repo access.
+  **cannot or should not hold a clone** of the repo: a private repo you can't or won't give the box
+  a read-only deploy key for, or a box with no repo access.
   The stage-then-swap design means an interrupted transfer never half-empties the live site.
 - **Pull (`deploy-pull.sh` + timer)** — the box holds the repo clone AS its stack dir and `git
   pull`s on a poll. Use when the repo can live on the box directly. Simpler, but the repo has to be
@@ -82,10 +115,12 @@ Delete whichever pair you don't use.
 
 The `.service`/`.timer` are **system** units (they run as a system unit that drops to `<user>` via
 `User=`/`HOME=` — that drop-to-user form is why they're system units, not `--user` ones). In your
-app repo, rename `deploy-pull.service.example` → `deploy/<app>-deploy.service` and
-`deploy-pull.timer.example` → `deploy/<app>-deploy.timer` (same rename `deploy-pull.sh.example`
-itself gets, dropping `.example`) — these arrive with the clone in the pull model, since they live
-under `deploy/` in the repo. Install them with `sudo`:
+app repo, copy `deploy-pull.service.example` to `deploy/<app>-deploy.service` and
+`deploy-pull.timer.example` to `deploy/<app>-deploy.timer` — both change stem AND drop `.example`,
+whereas `deploy-pull.sh.example` becomes `deploy/deploy-pull.sh`, keeping its stem (the `.service`'s
+`ExecStart=` names that script path and the `.timer`'s `Unit=` names the service's unit name, so
+keep all three in sync). They arrive with the clone in the pull model, since they live under
+`deploy/` in the repo. Install them with `sudo`:
 
 ```bash
 # on the box, in /opt/stacks/<app>/deploy/ (already there via the clone -- see "Bring it up" above)
@@ -104,7 +139,9 @@ disable --now <app>-deploy.timer`. (Prefer cron? One line polls without the syst
 but it must go in `<user>`'s OWN crontab, run as `<user>` via `crontab -e` (not `sudo crontab -e`,
 which edits root's crontab and hits the same dubious-ownership trap the clone step above avoids, or
 on an older git succeeds as root and leaves root-owned `.git` files that lock `<user>` back out):
-`*/5 * * * * /bin/bash /opt/stacks/<app>/deploy/deploy-pull.sh`.)
+`*/5 * * * * /bin/bash /opt/stacks/<app>/deploy/deploy-pull.sh`. Its output goes to cron's mail,
+not the journal, so the `journalctl` verify line above doesn't apply -- redirect it to a log file
+if you want to see it.)
 
 ## Web-root knob
 

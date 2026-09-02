@@ -5,9 +5,10 @@
 .DESCRIPTION
     Copy to `publish.ps1` in your app repo and adapt the CONFIG block below. This is the PUSH
     publish model: build locally, then scp the output to the box's bind-mount directory. Use it
-    when the box cannot (or should not) hold a clone of the repo -- a private repo, or a box with
-    no repo access. If the box CAN clone the repo directly, prefer the pull model instead
-    (publish/deploy-pull.sh + the systemd timer units) -- see README.md's "Push or pull?".
+    when the box cannot (or should not) hold a clone of the repo -- a private repo you can't or
+    won't give the box a read-only deploy key for, or a box with no repo access. If the box CAN
+    clone the repo directly, prefer the pull model instead (publish/deploy-pull.sh + the systemd
+    timer units) -- see README.md's "Push or pull?".
 
     No restart needed on the box: nginx reads files per request off the read-only mount. (A
     `docker compose restart` is only needed when nginx.conf itself changes, which this never
