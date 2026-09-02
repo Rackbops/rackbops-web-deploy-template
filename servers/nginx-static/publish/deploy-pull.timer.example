@@ -9,6 +9,10 @@
 Description=<app> -- poll GitHub for site updates
 
 [Timer]
+# Explicit, not relying on the default same-stem pairing (foo.timer -> foo.service): if you rename
+# only one half of this pair when copying it into deploy/, an implicit pairing would silently break
+# `systemctl enable --now`. Keep this in sync with whatever you rename the .service file to.
+Unit=<app>-deploy.service
 OnBootSec=2min
 OnUnitActiveSec=5min
 Persistent=true

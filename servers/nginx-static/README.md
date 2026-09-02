@@ -17,18 +17,41 @@ same shared [`gate/`](../../gate/).
 
 ## Bring it up on the box
 
-The stack dir holds `compose.yaml` + `nginx.conf` (shipped **once** at setup) and the web-root
-content (reshipped per update — see Publish below).
+How the stack dir gets populated differs by model (see "Push or pull?" below for which applies to
+you) — pick the matching block. Either way, `compose.yaml` + `nginx.conf` end up in place once, and
+only the web-root content gets reshipped per update — for the pull model, `nginx.conf` and
+`deploy/` can also change on a later pull; see "Updating" below for what that requires.
+
+### Pull model: clone as `<user>`, not root
 
 ```bash
 # on the box
 sudo mkdir -p /opt/stacks/<app>
-sudo chown <user>:<user> /opt/stacks/<app>   # so a push (scp) publish can write here as <user>, not root
-# copy compose.yaml and nginx.conf into /opt/stacks/<app>/
+sudo chown <user>:<user> /opt/stacks/<app>
+sudo -u <user> git clone <your-repo-url> /opt/stacks/<app>
 ```
 
-Get the content there once (a first push, or the first `git pull` for the pull model — see below),
-then:
+`compose.yaml`, `nginx.conf`, and `deploy/` all arrive with the clone — there's nothing to copy in
+separately. Cloning AS `<user>` matters: the timer's `User=<user>` service runs `git pull` as
+`<user>`, and a clone owned by a different user trips git's `dubious ownership` check on every run
+(cloning as root then `chown`-ing after also works, but only with `chown -R`, which is easy to
+forget and leaves no obvious symptom until the timer starts failing). For a private repo, set up a
+read-only deploy key (or an SSH config `Host` alias) for `<user>` *before* cloning, so this clone
+and every later `git pull` can authenticate non-interactively. Never commit on the box — the
+timer's `git pull --ff-only` assumes a clean working tree.
+
+### Push model: mkdir, then scp
+
+```bash
+# on the box
+sudo mkdir -p /opt/stacks/<app>
+sudo chown <user>:<user> /opt/stacks/<app>   # so publish-scp.ps1 can write here as <user>, not root
+# copy compose.yaml and nginx.conf into /opt/stacks/<app>/ by hand (scp, or paste via Dockge)
+```
+
+Then run `publish-scp.ps1` once to ship the initial build into the (now-existing) web-root dir.
+
+### Both models, once the stack dir is populated
 
 ```bash
 cd /opt/stacks/<app> && sudo docker compose up -d
@@ -58,11 +81,14 @@ Delete whichever pair you don't use.
 ### Installing the pull timer (box side, one time)
 
 The `.service`/`.timer` are **system** units (they run as a system unit that drops to `<user>` via
-`User=`/`HOME=` — that drop-to-user form is why they're system units, not `--user` ones). Install
-them with `sudo`:
+`User=`/`HOME=` — that drop-to-user form is why they're system units, not `--user` ones). In your
+app repo, rename `deploy-pull.service.example` → `deploy/<app>-deploy.service` and
+`deploy-pull.timer.example` → `deploy/<app>-deploy.timer` (same rename `deploy-pull.sh.example`
+itself gets, dropping `.example`) — these arrive with the clone in the pull model, since they live
+under `deploy/` in the repo. Install them with `sudo`:
 
 ```bash
-# on the box, after copying deploy-pull.sh + the units into /opt/stacks/<app>/deploy/
+# on the box, in /opt/stacks/<app>/deploy/ (already there via the clone -- see "Bring it up" above)
 sudo cp /opt/stacks/<app>/deploy/<app>-deploy.service /etc/systemd/system/
 sudo cp /opt/stacks/<app>/deploy/<app>-deploy.timer   /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -74,7 +100,10 @@ systemctl list-timers <app>-deploy.timer --no-pager       # next scheduled run
 ```
 
 Re-copy + `sudo systemctl daemon-reload` after editing a unit. Disable with `sudo systemctl
-disable --now <app>-deploy.timer`. (Prefer cron? One line polls without the systemd machinery:
+disable --now <app>-deploy.timer`. (Prefer cron? One line polls without the systemd machinery --
+but it must go in `<user>`'s OWN crontab, run as `<user>` via `crontab -e` (not `sudo crontab -e`,
+which edits root's crontab and hits the same dubious-ownership trap the clone step above avoids, or
+on an older git succeeds as root and leaves root-owned `.git` files that lock `<user>` back out):
 `*/5 * * * * /bin/bash /opt/stacks/<app>/deploy/deploy-pull.sh`.)
 
 ## Web-root knob
@@ -98,6 +127,11 @@ asset the page references under the web root.
   checkout` replaces the file via a new inode, and Docker's single-file bind mount keeps watching
   the old one, so a reload silently keeps serving the stale config. `reload` is fine after an
   in-place scp/cp, which overwrites the file rather than replacing it.
+- **`compose.yaml` or a `deploy/*.service`/`*.timer` unit** — pull model only (the push model never
+  ships either): `deploy-pull.sh`'s diff check flags a `compose.yaml` change with a reminder to run
+  `docker compose up -d`, and a unit-file change with a reminder to re-copy it to
+  `/etc/systemd/system/` and run `sudo systemctl daemon-reload` -- see its log, same as the
+  `nginx.conf` case above.
 
 ## SPA vs. plain static
 
