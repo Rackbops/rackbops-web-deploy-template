@@ -52,18 +52,66 @@ reachable without a policy in front of it.
 
 ### 1a. Access application
 
-Create a self-hosted Access app whose destination is your hostname. Reuse an existing allow
-policy (and, if you have one, a service-token policy for machine probes) by referencing it by
-`id` rather than creating a duplicate — confirm real reuse by checking the returned policy's
-`created_at` is the ORIGINAL timestamp, not a fresh one.
+Create a self-hosted Access app whose destination is your hostname, via `POST
+/accounts/{account_id}/access/apps`. Reuse an existing allow policy (and, if you have one, a
+service-token policy for machine probes) by referencing it by `id` rather than creating a
+duplicate — confirm real reuse by checking the returned policy's `created_at` is the ORIGINAL
+timestamp, not a fresh one.
+
+```jsonc
+{
+  "name": "<app-name>",
+  "type": "self_hosted",
+  "destinations": [
+    { "type": "public", "uri": "<your-hostname>" }
+  ],
+  "session_duration": "24h",
+  // Which login methods this app offers. Leaving these two OUT is a decision, not a
+  // no-op -- see "Pin your login method" below.
+  "allowed_idps": ["<your-idp-id>"],
+  "auto_redirect_to_identity": true,
+  "policies": [
+    { "id": "<existing-allow-policy-id>" }   // reuse by id; don't duplicate
+  ]
+}
+```
+
+Capture the app's **AUD tag** from the create response — the tunnel ingress rule needs it.
+
+(Cloudflare's schema still marks the older `domain` field required, but `destinations` supersedes
+it and a create with `destinations` alone is what the reference rollout used. If you validate the
+body against the raw schema, expect a spurious "missing `domain`".)
+
+**Pin your login method — or decide not to, on purpose.** Omit `allowed_idps` and Cloudflare
+defaults it to *every* identity provider configured on your account; omit
+`auto_redirect_to_identity` and it defaults to `false`, showing an IdP picker. Usually it is your
+Allow policy, not these fields, that grants access — but they set *how* an allow-listed person may
+authenticate, so if your account carries providers of differing strength, the weakest one an
+allow-listed user can reach is the real bar, whatever you thought was in force.
+
+They stop being merely cosmetic the moment a policy rule keys on **IdP group membership**: Access
+only evaluates a user's IdP group memberships when they actually authenticated through that IdP, so
+someone who logs in by another method is no longer matched by such a rule. An `Exclude` rule built
+on an IdP group therefore stops excluding, and fails open. Pin `allowed_idps` if any of your rules
+work that way.
+
+- **List the providers on your account first** (`GET /accounts/{account_id}/access/identity_providers`)
+  rather than assuming. What you find depends on when the account was made: Cloudflare made its own
+  IdP the default for Zero Trust organizations created from mid-2026, and stopped adding one-time
+  PIN automatically; older organizations keep whatever they were set up with, OTP included. Adding
+  OTP later is also a supported choice, so an account can have both.
+- **The two fields are coupled**: Cloudflare documents that `auto_redirect_to_identity` requires
+  exactly one entry in `allowed_idps`. What happens if you break that rule is **untested here** —
+  expect either a rejected request or the picker you were trying to skip; don't rely on either.
+- **Later updates are a full replace.** The app endpoint has `PUT` and no `PATCH`, so a
+  subsequent update that omits these fields silently resets them to the defaults above. Re-send the
+  whole body, not just the parts you meant to change — the same trap as the tunnel config in §1b.
 
 **One app can cover multiple hostnames, including across two DNS zones** — a `destinations[]`
 entry of `type: "public"` is just `{ type, uri }`, a bare hostname with no zone field; Access apps
 are account-scoped, not zone-scoped. Before relying on a multi-domain app, **verify the
 `destinations` shape against a real existing app** (read one back via the API) rather than trusting
 the schema alone. The proven fallback is two single-hostname apps sharing the same policies.
-
-Capture the app's **AUD tag** from the create response — the tunnel ingress rule needs it.
 
 ### 1b. Tunnel ingress (remotely-managed)
 
@@ -130,7 +178,8 @@ a real browser and confirm an allow-listed login reaches the site.
   repo.
 - **Adding another hostname to an existing app** — re-PUT the tunnel config with the new ingress
   rule (full-array replace, §1b) and add its DNS record (§1c); add the hostname to the Access app's
-  `destinations`.
+  `destinations` (also a full replace — `GET` the app and re-send its whole body with the extra
+  destination, or you reset `allowed_idps` and every other omitted field to its default, §1a).
 
 (Updating the *content or config of the origin itself* is the base server's concern, not the
 gate's — including whether a given change needs the origin restarted: see your server's README,
