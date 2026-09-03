@@ -55,4 +55,7 @@ services:
       #   * the REPO ROOT itself:  .:/usr/share/nginx/html:ro        (pull model only -- read the
       #                            server README's "#web-root-knob" section first, linked above)
       - <WEB_ROOT_DIR>:/usr/share/nginx/html:ro
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro   # scp push never re-ships this; git-pull ships whatever you commit (see nginx.conf.example)
+      # Copy ONE of nginx.conf.spa.example / nginx.conf.static.example to nginx.conf -- see the
+      # server README's "SPA vs. plain static". The scp push never re-ships this file; the
+      # git-pull model ships whatever you commit.
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro

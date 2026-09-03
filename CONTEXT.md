@@ -15,7 +15,7 @@ still resolve by GitHub's owner redirect, but `Rackbops/...` is canonical.)
 
 - **`Rackbops/Tooling` `tools-site/`** -- the reference nginx-static consumer (`Tooling#281`), and
   the **push (scp)** half of the publish fork. Source of
-  `servers/nginx-static/compose.yaml.example`, `nginx.conf.example`, and
+  `servers/nginx-static/compose.yaml.example`, the `nginx.conf.*.example` pair, and
   `publish/publish-scp.ps1.example`. The scp publish's stage-then-swap design + `$LASTEXITCODE`
   and empty-build guards were proven and adversarially reviewed there (two review rounds).
 - **`Rackbops/rackbops` `deploy/`** -- the reference git-pull consumer, and the **pull (git timer)**
@@ -74,7 +74,8 @@ gate proves the end-to-end.
 | `Rackbops/rackbops-ui-ux-std-lib` showcase | nginx-static | tbd | **Prospective.** Parked; would need the repo-root web-root knob (sibling `../styles` import). |
 
 **The repo-root web-root knob ships but nobody runs it** -- `compose.yaml.example` and
-`nginx.conf.example` support it (the latter's deny blocks landed in #19), but it is inferred from
+both `nginx.conf.*.example` variants support it (their deny blocks landed in #19), but it is
+inferred from
 the sibling-import problem rather than extracted from a running deployment, which is why the server
 README flags it as such.
 

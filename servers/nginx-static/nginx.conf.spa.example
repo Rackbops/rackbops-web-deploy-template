@@ -1,4 +1,9 @@
-# <app> -- served by nginx:alpine. Copy to `nginx.conf` in your app repo and adapt.
+# <app> -- served by nginx:alpine. SPA / client-side-routed build (React + Vite, etc.).
+#
+# Copy THIS file to `nginx.conf` in your app repo if unknown paths should fall back to
+# index.html so a client router can take over. If your site is hand-authored HTML with no
+# client router, copy `nginx.conf.static.example` instead -- it 404s unknown paths honestly.
+# Take exactly one; the choice is the act of copying, so there is nothing to uncomment.
 #
 # Template (relative paths won't resolve from your repo):
 #   https://github.com/Rackbops/rackbops-web-deploy-template/blob/main/servers/nginx-static/README.md
@@ -15,6 +20,10 @@
 # the old one, so a reload silently keeps serving the stale config. Unlike site content, which is
 # served live off the read-only mount with no restart either way.
 server {
+    # === SHARED with nginx.conf.static.example, down to the `location /` block. Fix a bug in
+    # === one of these files and fix it in the other; the two are meant to differ ONLY in how
+    # === an unknown path is answered.
+
     # Match compose.yaml's CONTAINER_PORT. 80 is the stock default (keep it unless you have a
     # reason not to); if you set a custom port here it must equal the right-hand side of the
     # "127.0.0.1:<HOST_PORT>:<CONTAINER_PORT>" publish.
@@ -23,7 +32,7 @@ server {
     root  /usr/share/nginx/html;
     index index.html;
 
-    # Liveness probe -- exact match, so it never falls through to the fallback below. Optional but
+    # Liveness probe -- exact match, so it never falls through to the `location /` below. Optional but
     # cheap; a co-located uptime monitor or a deploy healthcheck can hit it. (tools-site has this;
     # rackbops does not -- keep it or delete it.)
     location = /healthz {
@@ -47,23 +56,14 @@ server {
     location = /nginx.conf   { return 404; }
     location ^~ /deploy/     { return 404; }
 
-    # === Pick ONE `location /` block for your site type; delete the other. ===
+    # === END SHARED. Below is what makes this the SPA variant. ===
 
-    # (A) SPA / client-side-routed build (React + Vite, etc.): every unknown path falls back to
-    #     index.html so the client router can take over. Use this for a built app like tools-site.
+    # Every unknown path falls back to index.html so the client router can take over -- which
+    # means this server answers 200 for paths that do not exist. That is correct for an app and
+    # wrong for a content site: use nginx.conf.static.example there.
+    # NOTE: with a repo-root web root and NO root index.html, this fallback loops until nginx
+    # aborts the request with a 500 -- see the README's "#web-root-knob" section.
     location / {
         try_files $uri $uri/ /index.html;
     }
-
-    # (B) Plain static HTML (hand-authored pages, no client router): a real 404 for unknown paths,
-    #     optionally rendered by your own 404 page. Use this for a site like rackbops. To enable,
-    #     delete block (A) above and uncomment this one.
-    #
-    # location / {
-    #     try_files $uri $uri/ =404;
-    # }
-    # error_page 404 /404.html;
-    # location = /404.html {
-    #     internal;
-    # }
 }

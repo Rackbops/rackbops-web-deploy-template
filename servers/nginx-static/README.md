@@ -11,7 +11,8 @@ same shared [`gate/`](../../gate/).
 | File | What it is |
 |---|---|
 | [`compose.yaml.example`](compose.yaml.example) | The Dockge stack: `nginx:alpine`, loopback bind, the web-root + port knobs. |
-| [`nginx.conf.example`](nginx.conf.example) | The `server {}` fragment: `/healthz` + a pick-one SPA-vs-static `location /`. |
+| [`nginx.conf.spa.example`](nginx.conf.spa.example) | The `server {}` fragment for a **client-routed build**: unknown paths fall back to `index.html`. Copy ONE of this pair. |
+| [`nginx.conf.static.example`](nginx.conf.static.example) | Same fragment for **hand-authored HTML**: unknown paths 404. See "SPA vs. plain static". |
 | [`publish/publish-scp.ps1.example`](publish/publish-scp.ps1.example) | **Push** publish: build locally, scp to the box via a stage-then-swap. |
 | [`publish/deploy-pull.sh.example`](publish/deploy-pull.sh.example) + [`.service`](publish/deploy-pull.service.example) / [`.timer`](publish/deploy-pull.timer.example) | **Pull** publish: the box clones the repo and `git pull`s on a systemd-timer poll. |
 
@@ -175,15 +176,15 @@ ground-truth rule.
 Two consequences to know before using it:
 
 - It serves EVERYTHING in the clone unless `nginx.conf` denies it — `.git/`, `compose.yaml`,
-  `nginx.conf`, `deploy/*.service`, all of it. `nginx.conf.example` denies these by default
-  (dotfiles, `compose.yaml`, `nginx.conf`, `deploy/`) — don't remove those blocks if you use this
-  mount.
+  `nginx.conf`, `deploy/*.service`, all of it. Both `nginx.conf.*.example` variants deny these by
+  default (dotfiles, `compose.yaml`, `nginx.conf`, `deploy/`) — don't remove those blocks if you
+  use this mount.
 - `/` needs something to actually resolve to: `try_files` finds nothing for a bare `/` unless a
   root `index.html` exists (a `site/index.html` is not `/index.html`). Either add a root
   `index.html` (e.g. one that redirects into your real entry point), or add
   `location = / { return 302 /site/; }` (adjust the path) — otherwise a gated visitor hits nginx's
-  bare 403 at `/` with no indication where the real site lives. With the SPA fallback variant (A)
-  of `nginx.conf.example` active, a missing root `index.html` is worse than a 403 at `/` alone: ANY
+  bare 403 at `/` with no indication where the real site lives. If you copied
+  `nginx.conf.spa.example`, a missing root `index.html` is worse than a 403 at `/` alone: ANY
   unmatched path also 500s (nginx's `try_files ... /index.html` fallback tries to internally
   redirect to the still-missing `/index.html` and loops until nginx aborts the request) — one more
   reason to add the root `index.html`/redirect above rather than leave it unresolved.
@@ -209,9 +210,17 @@ Two consequences to know before using it:
 
 ## SPA vs. plain static
 
-`nginx.conf.example` ships both `location /` bodies — pick one:
+Two complete files, differing only in how an unknown path is answered. **Copy one of them to
+`nginx.conf`** — the choice is the act of copying, so there is nothing to uncomment and no way to
+end up with the wrong one by leaving the file untouched:
 
-- **SPA fallback** (`try_files $uri $uri/ /index.html;`) for a client-routed build (React/Vite,
-  like `tools-site`) so deep links resolve to the app.
-- **Plain static** (`try_files $uri $uri/ =404;` + an optional `error_page 404`) for hand-authored
-  HTML (like the `rackbops` one-pager) so unknown paths 404 honestly.
+- [`nginx.conf.spa.example`](nginx.conf.spa.example) — `try_files $uri $uri/ /index.html;` for a
+  client-routed build (React/Vite, like `tools-site`) so deep links resolve to the app. Unknown
+  paths answer **200 with `index.html`**, which is right for an app and wrong for a content site.
+- [`nginx.conf.static.example`](nginx.conf.static.example) — `try_files $uri $uri/ =404;` plus an
+  optional `error_page 404`, for hand-authored HTML (like the `rackbops` one-pager) so unknown
+  paths **404 honestly**, and link checkers, uptime monitors and search engines see the truth.
+
+Inside `server { }` the two carry identical directives down to `location /` — the port, the root,
+`/healthz`, and the deny rules that matter for the repo-root mount. Only the headers and the
+`location /` body differ. If you fix something in that shared part, fix it in both files.
