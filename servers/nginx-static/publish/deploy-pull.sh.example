@@ -10,14 +10,14 @@
 # Template, incl. the "Push or pull?" section behind that choice -- relative paths won't resolve
 # from your repo:
 #   https://github.com/Rackbops/rackbops-web-deploy-template/blob/main/servers/nginx-static/README.md#push-or-pull
+# What each kind of change needs on the box:
+#   https://github.com/Rackbops/rackbops-web-deploy-template/blob/main/servers/nginx-static/README.md#updating
 #
-# The site is a read-only bind mount, so a content-only update needs no restart: nginx serves the
-# new files the instant the fast-forward lands. compose.yaml, nginx.conf, and deploy/*.service|
-# .timer changes each need a different action on the box (a `docker compose up`, a container
-# restart, or a systemd daemon-reload) -- the clone IS the stack dir in this model, so a pull
-# ships whatever you commit to any of them. This script diffs the pull and logs the exact action
-# needed as a reminder rather than doing it unattended -- keeping the timer privilege-light (no
-# docker, no sudo).
+# The clone IS the stack dir in this model, so a pull ships whatever you commit -- site content,
+# but also compose.yaml, nginx.conf and the deploy/ units, which each need a DIFFERENT action on
+# the box. This script diffs the pull and logs the action needed as a reminder rather than doing
+# it unattended, which keeps the timer privilege-light (no docker, no sudo). Which change needs
+# what, and why, lives in the "Updating" section linked above -- not restated here.
 #
 # The whole body is wrapped in main() so bash parses it before running: a pull that updates this
 # very file mid-run can't trip over a half-read script.
@@ -40,6 +40,12 @@ main() {
 
   echo "<app>: updated ${before:0:7} -> ${after:0:7}."
 
+  # === POST-ARRIVAL (per-server) ================================================================
+  # The logic above is transport: fetch, compare, decide whether anything moved -- server-agnostic.
+  # The path-to-action map below is not: it knows what an nginx-static stack is made of, and is the
+  # block a second base server would swap. (The exit-status note at the very bottom is generic
+  # again, and the file header names these paths too.)
+  #
   # Path-to-action map, not a single compose.yaml special case: each of these needs a DIFFERENT
   # action on the box, and more than one can be true in the same pull. `git diff --name-only`
   # returns paths relative to the repo root, matching these patterns as-is since we already `cd`'d

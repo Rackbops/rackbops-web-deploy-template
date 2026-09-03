@@ -7,18 +7,18 @@
 #
 # Template (relative paths won't resolve from your repo):
 #   https://github.com/Rackbops/rackbops-web-deploy-template/blob/main/servers/nginx-static/README.md
+# What needs a restart, and how a change reaches the box:
+#   https://github.com/Rackbops/rackbops-web-deploy-template/blob/main/servers/nginx-static/README.md#updating
 #
 # Mounted at /etc/nginx/conf.d/default.conf -- despite the name you may give it, this is a
 # `server {}` FRAGMENT, not a full nginx.conf: the base image's real nginx.conf already supplies
-# http{}/events{} and includes conf.d/*.conf. Content-free by design. Whether the box picks up a
-# later change here depends on the publish model: the scp push never re-ships it (it stays
-# whatever was copied to the box at setup, until you scp it again by hand); the git-pull model
-# ships whatever you commit, same as everything else in the clone (deploy-pull.sh's diff check
-# flags it). Either way, a change here needs `docker compose restart <app>` to take effect --
-# `nginx -s reload` only works after an in-place file copy (scp/cp), NOT after a pull: `git
-# checkout` replaces the file via a new inode, and Docker's single-file bind mount keeps watching
-# the old one, so a reload silently keeps serving the stale config. Unlike site content, which is
-# served live off the read-only mount with no restart either way.
+# http{}/events{} and includes conf.d/*.conf. Content-free by design.
+#
+# A change to THIS file needs `docker compose restart <app>` -- it is the one change that does,
+# unlike site content. How the change reaches the box, why `nginx -s reload` is not a substitute
+# after a git pull, and what the other stack files need are all in ONE place: the "Updating"
+# section linked above. Don't restate them here; a caveat added there should not have to be
+# found in six other files.
 server {
     # === SHARED with nginx.conf.static.example, down to the `location /` block. Fix a bug in
     # === one of these files and fix it in the other; the two are meant to differ ONLY in how

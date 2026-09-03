@@ -13,10 +13,12 @@
     Template, incl. the "Push or pull?" section behind that choice -- relative paths won't resolve
     from your repo:
       https://github.com/Rackbops/rackbops-web-deploy-template/blob/main/servers/nginx-static/README.md#push-or-pull
+    What each kind of change needs on the box:
+      https://github.com/Rackbops/rackbops-web-deploy-template/blob/main/servers/nginx-static/README.md#updating
 
-    No restart needed on the box: nginx reads files per request off the read-only mount. (A
-    `docker compose restart` is only needed when nginx.conf itself changes, which this never
-    ships.) If your build hashes asset filenames (Vite etc.), a fresh index.html always references
+    Content-only, and content needs no restart -- this script never ships nginx.conf. What each
+    kind of change does need is in the "Updating" section linked above, not restated here.
+    If your build hashes asset filenames (Vite etc.), a fresh index.html always references
     the assets that shipped alongside it, so there's no stale-asset window.
 
     Publishes via a remote STAGING directory, not a direct scp into the live web-root dir:
@@ -156,5 +158,9 @@ if ($LASTEXITCODE -ne 0) {
     Write-Warning "Published, but cleanup of '$remoteStaging' on $Server failed (exit $LASTEXITCODE) -- the live site is correct; the leftover staging dir is harmless and will be replaced by the next publish."
 }
 
+# === POST-ARRIVAL (per-server) ================================================================
+# The CODE above is transport: build, stage, swap, all server-agnostic. What follows is not -- it
+# states what serves the files. A second base server would swap this block. (The .DESCRIPTION at
+# the top names nginx too; the seam this marker draws is in the executable part, not the docs.)
 Write-Output "Published. Content-only changes are live immediately -- no restart needed."
 Write-Output "(A restart is only required when nginx.conf changes, which this script never ships.)"

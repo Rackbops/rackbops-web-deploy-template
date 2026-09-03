@@ -62,6 +62,19 @@ still resolves but only by GitHub's owner redirect -- which dies the moment anyt
 that name. Write `Rackbops/...` in anything new. `Tooling`'s scaffold pointer still carries the old
 spelling (`Rackbops/Tooling#349` tracks that sweep).
 
+## Overriding personal's "config never lives in the repo"
+
+Personal's **Application config & deployment** says an app must never depend on its repo directory
+existing, and that a repo overriding one of my rules must say so and say why. **The pull model
+overrides it, deliberately.** There the clone IS the Dockge stack dir at `/opt/stacks/<app>/` --
+already the machine location personal prescribes for a service, so the only real deviation is that
+this location is also a checkout: `nginx.conf` is bind-mounted straight out of it and
+`compose.yaml` is read from it in place. That is sound here and not a precedent for an app: these
+are content-free config fragments with no secrets and no state, the operator opts into the model
+knowingly, and it is what the reference consumer actually does. (The one real secret, the read-only
+deploy key, lives in `~/.ssh`, not the clone.) The push model has no such dependency. Anything
+carrying secrets or persistent state still follows personal's rule.
+
 ## Testing & checks
 
 **No lint/test CI on this repo** -- by design (matches `addon-ci`). The `.example` files are copied
