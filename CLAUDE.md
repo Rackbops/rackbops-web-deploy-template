@@ -26,7 +26,8 @@ The `.example` files and runbooks are not authored from first principles -- each
 from a **real, running** implementation, and that provenance is the ground truth. When changing
 one, check it against its source rather than inventing behavior:
 
-- `servers/nginx-static/` (`compose.yaml.example`, `nginx.conf.example`,
+- `servers/nginx-static/` (`compose.yaml.example`, `nginx.conf.spa.example` +
+  `nginx.conf.static.example`,
   `publish/publish-scp.ps1.example`) -- extracted from `Rackbops/Tooling`'s `tools-site/` (the `#281`
   deploy artifact; the scp script's stage-then-swap design and its `$LASTEXITCODE`/empty-build
   guards were proven and adversarially reviewed there).

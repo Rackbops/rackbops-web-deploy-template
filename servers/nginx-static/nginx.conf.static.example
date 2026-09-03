@@ -1,0 +1,78 @@
+# <app> -- served by nginx:alpine. Plain static HTML (hand-authored pages, no client router).
+#
+# Copy THIS file to `nginx.conf` in your app repo if unknown paths should 404 honestly. If your
+# site is a client-side-routed build (React + Vite, etc.) whose deep links must resolve to the
+# app, copy `nginx.conf.spa.example` instead -- it falls back to index.html.
+# Take exactly one; the choice is the act of copying, so there is nothing to uncomment.
+#
+# Template (relative paths won't resolve from your repo):
+#   https://github.com/Rackbops/rackbops-web-deploy-template/blob/main/servers/nginx-static/README.md
+#
+# Mounted at /etc/nginx/conf.d/default.conf -- despite the name you may give it, this is a
+# `server {}` FRAGMENT, not a full nginx.conf: the base image's real nginx.conf already supplies
+# http{}/events{} and includes conf.d/*.conf. Content-free by design. Whether the box picks up a
+# later change here depends on the publish model: the scp push never re-ships it (it stays
+# whatever was copied to the box at setup, until you scp it again by hand); the git-pull model
+# ships whatever you commit, same as everything else in the clone (deploy-pull.sh's diff check
+# flags it). Either way, a change here needs `docker compose restart <app>` to take effect --
+# `nginx -s reload` only works after an in-place file copy (scp/cp), NOT after a pull: `git
+# checkout` replaces the file via a new inode, and Docker's single-file bind mount keeps watching
+# the old one, so a reload silently keeps serving the stale config. Unlike site content, which is
+# served live off the read-only mount with no restart either way.
+server {
+    # === SHARED with nginx.conf.spa.example, down to the `location /` block. Fix a bug in one
+    # === of these files and fix it in the other; the two are meant to differ ONLY in how an
+    # === unknown path is answered.
+
+    # Match compose.yaml's CONTAINER_PORT. 80 is the stock default (keep it unless you have a
+    # reason not to); if you set a custom port here it must equal the right-hand side of the
+    # "127.0.0.1:<HOST_PORT>:<CONTAINER_PORT>" publish.
+    listen 80;
+
+    root  /usr/share/nginx/html;
+    index index.html;
+
+    # Liveness probe -- exact match, so it never falls through to the `location /` below. Optional but
+    # cheap; a co-located uptime monitor or a deploy healthcheck can hit it. (tools-site has this;
+    # rackbops does not -- keep it or delete it.)
+    location = /healthz {
+        return 200;
+    }
+
+    # Deny dotfiles/dirs (.git, .env, ...) except /.well-known/ (ACME challenges etc.) -- matters
+    # most for the repo-root web-root mount (the "#web-root-knob" section of the template README
+    # linked at the top of this file), where .git/ would otherwise be directly readable; harmless
+    # elsewhere since these paths won't exist under a ./dist or ./site mount. `return 404` (not
+    # `deny all`) is what actually applies here -- it fires in nginx's rewrite phase, before the
+    # access-phase `deny` would even run.
+    location ~ /\.(?!well-known/) {
+        return 404;
+    }
+    # Same reasoning, for the repo-root-level stack files a repo-root mount would also expose.
+    # Exact/prefix match, not directory-wide like the dotfile rule above -- a same-named file
+    # elsewhere in the tree (e.g. a docs copy at /some/nginx.conf) is a different, ordinary file
+    # and is untouched by these.
+    location = /compose.yaml { return 404; }
+    location = /nginx.conf   { return 404; }
+    location ^~ /deploy/     { return 404; }
+
+    # === END SHARED. Below is what makes this the plain-static variant. ===
+
+    # An unknown path gets a real 404 rather than index.html, so link checkers, uptime monitors
+    # and search engines see the truth.
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    # OPTIONAL: render your own 404 page instead of nginx's default. `internal` keeps /404.html
+    # from being fetched directly. If you don't ship a /404.html, delete the `error_page` line AND
+    # the whole `location` block under it -- all four lines, or you leave a stray `}` that closes
+    # `server` early and nginx refuses to start. Deleting them is safe: the response is still a
+    # correct 404 with nginx's built-in body. Leaving them without the file is only untidy -- every
+    # 404 it serves also writes `open() ".../404.html" failed (2: No such file or directory)` to
+    # the error log.
+    error_page 404 /404.html;
+    location = /404.html {
+        internal;
+    }
+}
