@@ -19,13 +19,14 @@
 #
 # TimeoutStartSec= matters because Type=oneshot disables systemd's start timeout by DEFAULT (unlike
 # every other service type, per systemd.service(5)) -- without it, a hung `git pull` (a
-# stalled-but-open SSH session with no ServerAliveInterval to catch it) can park this unit running
-# forever, and since the paired .timer's OnUnitActiveSec= only re-arms from the last *activation*,
-# an already-running unit just... keeps running, with no visible error. On timeout systemd marks
-# the unit failed and kills its cgroup, letting the timer's next cycle try again -- sufficient on
-# its own, though a consumer can also add ConnectTimeout=/ServerAliveInterval=/ServerAliveCountMax=
-# to whatever SSH alias deploy-pull.sh's git pull uses, as a faster-triggering complementary guard
-# (see the template README's deploy-key SSH alias block).
+# stalled-but-open network session with no keepalive to catch it -- SSH or HTTPS, the box clones
+# over either) can park this unit running forever, and since the paired .timer's OnUnitActiveSec=
+# only re-arms from the last *activation*, an already-running unit just... keeps running, with no
+# visible error. On timeout systemd marks the unit failed and kills its cgroup, letting the timer's
+# next cycle try again -- sufficient on its own, though a consumer can also add a faster-triggering
+# complementary guard: ConnectTimeout=/ServerAliveInterval=/ServerAliveCountMax= to whatever SSH
+# alias deploy-pull.sh's git pull uses over SSH, or http.lowSpeedLimit/http.lowSpeedTime for an
+# HTTPS clone (see the template README's pull-model section for both).
 #
 # The 4min default has no basis beyond suiting a small hand-authored one-pager (the reference
 # consumer) -- raise it for a bigger repo or a slow uplink. Git's smart-protocol fetch has no

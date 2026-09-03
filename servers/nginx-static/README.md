@@ -37,6 +37,19 @@ git clone <REPO_URL> /opt/stacks/<app>       # as <user>, into the still-EMPTY d
 # (private repo? do the deploy-key setup below FIRST, then clone through its alias instead)
 ```
 
+The clone above defaults to HTTP(S) for a public repo, and gets none of the keepalive guard in the
+private-repo block below — `ConnectTimeout`/`ServerAliveInterval`/`ServerAliveCountMax` are
+`ssh_config` options and do nothing for an HTTPS transport. Git's HTTP client has its own
+equivalent, unset (so disabled) by default — set it once, on the box, right after cloning:
+
+```bash
+git -C /opt/stacks/<app> config http.lowSpeedLimit 1000    # bytes/sec
+git -C /opt/stacks/<app> config http.lowSpeedTime 30       # seconds -- abort under ~1 KB/s for 30s
+```
+
+Same faster-triggering role as the SSH keepalives further down: a guard ahead of the service's
+`TimeoutStartSec=` (see `deploy-pull.service.example`), not a replacement for it.
+
 `compose.yaml`, `nginx.conf`, and `deploy/` all arrive with the clone — there's nothing to copy in
 separately, and nothing may be copied in *before* it: `git clone` refuses a non-empty destination
 (`destination path already exists and is not an empty directory`). Cloning AS `<user>` matters: the
@@ -82,6 +95,9 @@ connected fine and then went silent mid-pull — OpenSSH's `ServerAliveInterval`
 without them neither ssh nor git nor the timer would notice that kind of hang on their own until
 `TimeoutStartSec=` finally kills it. If you clone through the plain `git@github.com:...` alternative
 instead of a deploy-key alias, add the same three lines to a `Host github.com` block instead.
+
+These three lines are SSH-specific -- `ssh_config` has no effect on an HTTPS clone. Cloning over
+HTTPS instead? Use the `http.lowSpeedLimit`/`http.lowSpeedTime` guard above the clone command.
 
 ### Push model: mkdir, then scp
 
