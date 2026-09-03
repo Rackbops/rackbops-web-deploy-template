@@ -44,8 +44,9 @@ timer's `User=<user>` service runs `git pull` as `<user>`, and a clone owned by 
 trips git's `dubious ownership` check on every run (cloning as root then `chown`-ing after also
 works, but only with `chown -R`, which is easy to forget and leaves no obvious symptom until the
 timer starts failing). If you're logged in as some other account, run the clone as `<user>` with
-`sudo -u <user> -H git clone ...` (`-H` sets `HOME` to `<user>`'s, matching the service's
-`Environment=HOME=` line).
+`sudo -u <user> -H git clone ...` (`-H` sets `HOME` to `<user>`'s for this one command, matching
+what the service gets automatically at runtime from its own `User=` line — systemd sets `$HOME`
+from `User=` by default, so the service doesn't need its own explicit `Environment=HOME=`).
 
 For a **private repo**, give `<user>` a read-only deploy key *before* cloning, so this clone and
 every later `git pull` authenticate non-interactively:
@@ -62,6 +63,9 @@ Host github-<app>
   User git
   IdentityFile ~/.ssh/<app>_deploy
   IdentitiesOnly yes
+  ConnectTimeout 15
+  ServerAliveInterval 15
+  ServerAliveCountMax 3
 EOF
 chmod 600 ~/.ssh/config
 # then the mkdir + chown lines above, and clone through the alias in place of <REPO_URL>:
@@ -70,6 +74,14 @@ git clone git@github-<app>:<OWNER>/<REPO>.git /opt/stacks/<app>
 
 Never commit on the box: once `main` moves past a commit made here, the timer's `git pull
 --ff-only` refuses (loudly, in the journal) rather than merging — the box is a pure consumer.
+
+The three keepalive lines above are a faster-triggering complement to the service's
+`TimeoutStartSec=` (see `deploy-pull.service.example`): `ConnectTimeout` bounds a hung *initial*
+connection attempt, while `ServerAliveInterval`/`ServerAliveCountMax` catch a session that
+connected fine and then went silent mid-pull — OpenSSH's `ServerAliveInterval` defaults to off, so
+without them neither ssh nor git nor the timer would notice that kind of hang on their own until
+`TimeoutStartSec=` finally kills it. If you clone through the plain `git@github.com:...` alternative
+instead of a deploy-key alias, add the same three lines to a `Host github.com` block instead.
 
 ### Push model: mkdir, then scp
 
@@ -125,7 +137,8 @@ Delete whichever pair you don't use.
 ### Installing the pull timer (box side, one time)
 
 The `.service`/`.timer` are **system** units (they run as a system unit that drops to `<user>` via
-`User=`/`HOME=` — that drop-to-user form is why they're system units, not `--user` ones). In your
+`User=` — systemd sets `$HOME` from that automatically; that drop-to-user form is why they're
+system units, not `--user` ones). In your
 app repo, copy `deploy-pull.service.example` to `deploy/<app>-deploy.service` and
 `deploy-pull.timer.example` to `deploy/<app>-deploy.timer` — both change stem AND drop `.example`,
 whereas `deploy-pull.sh.example` becomes `deploy/deploy-pull.sh`, keeping its stem (the `.service`'s
