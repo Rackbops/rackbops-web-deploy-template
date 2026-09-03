@@ -4,8 +4,8 @@
 # Copy to `deploy/deploy-pull.sh` in your app repo and set REPO_DIR below. This is the PULL
 # publish model: the box holds a clone of the repo AS its Dockge stack (the repo root IS the stack
 # dir), and a systemd system timer (see the paired .service/.timer) runs this on a poll. Use it
-# when the repo can live on the box directly; use the scp push model (publish-scp.ps1) instead when
-# it can't (private repo, no box access). See README.md's "Push or pull?".
+# when the repo can live on the box directly (a private repo is fine with a read-only deploy key);
+# use the scp push model (publish-scp.ps1) instead when it can't. See README.md's "Push or pull?".
 #
 # The site is a read-only bind mount, so a content-only update needs no restart: nginx serves the
 # new files the instant the fast-forward lands. compose.yaml, nginx.conf, and deploy/*.service|
