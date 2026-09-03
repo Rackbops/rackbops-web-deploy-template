@@ -5,14 +5,27 @@
 # pull timer" in the template README -- relative paths won't resolve from your repo:
 #   https://github.com/Rackbops/rackbops-web-deploy-template/blob/main/servers/nginx-static/README.md
 #
-# It runs as a system unit but drops to <user> via User=/HOME= below -- that drop-to-user form is
-# exactly why it's a system unit, not a `--user` one. Dropping to a DIFFERENT user is the part an
-# ordinary user manager can't do: systemd.exec says that for "user services of any other user"
-# than root, "switching user identity is not permitted, hence the only valid setting is the same
-# user the user's service manager is running as". So User= is accepted in a user unit, it just
-# can't name anyone else there. Paired with the .timer, which schedules it. The service body stays
+# It runs as a system unit but drops to <user> via User= below -- that drop-to-user form is exactly
+# why it's a system unit, not a `--user` one. Dropping to a DIFFERENT user is the part an ordinary
+# user manager can't do: systemd.exec says that for "user services of any other user" than root,
+# "switching user identity is not permitted, hence the only valid setting is the same user the
+# user's service manager is running as". So User= is accepted in a user unit, it just can't name
+# anyone else there. Paired with the .timer, which schedules it. The service body stays
 # privilege-light: no docker, no sudo -- it only pulls and logs (installing the unit needs sudo;
 # running it does not).
+#
+# No Environment=HOME= line: systemd.exec's SetLoginEnvironment= "defaults to true if User= ...
+# [is] set", so $HOME is set automatically from User= above -- an explicit line here is redundant.
+#
+# TimeoutStartSec= matters because Type=oneshot disables systemd's start timeout by DEFAULT (unlike
+# every other service type, per systemd.service(5)) -- without it, a hung `git pull` (a
+# stalled-but-open SSH session with no ServerAliveInterval to catch it) can park this unit running
+# forever, and since the paired .timer's OnUnitActiveSec= only re-arms from the last *activation*,
+# an already-running unit just... keeps running, with no visible error. On timeout systemd marks
+# the unit failed and kills its cgroup, letting the timer's next cycle try again -- sufficient on
+# its own, though a consumer can also add ConnectTimeout=/ServerAliveInterval=/ServerAliveCountMax=
+# to whatever SSH alias deploy-pull.sh's git pull uses, as a faster-triggering complementary guard
+# (see the template README's deploy-key SSH alias block).
 
 [Unit]
 Description=<app> -- pull the latest site from GitHub
@@ -21,6 +34,6 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+TimeoutStartSec=4min
 User=<user>
-Environment=HOME=/home/<user>
 ExecStart=/bin/bash /opt/stacks/<app>/deploy/deploy-pull.sh
