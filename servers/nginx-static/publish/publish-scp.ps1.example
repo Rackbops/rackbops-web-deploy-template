@@ -65,12 +65,25 @@
         ControlMaster auto
         ControlPersist 10m
         ControlPath ~/.ssh/cm-%r@%h:%p
+        ServerAliveInterval 15
+        ServerAliveCountMax 3
 
-    Windows caveat: Win32-OpenSSH -- the ssh.exe on Windows 10/11, including the one PowerShell
-    invokes below -- does not implement ControlMaster; ControlPath needs a Unix domain socket that
-    Windows doesn't expose the same way, so the option is accepted but no master connection is ever
-    created. The stanza above only helps when the ssh/scp calls run under WSL, Git Bash, or a Linux/
-    macOS client -- a native Windows ssh.exe still pays the full handshake for each connection above.
+    A long username or a deep-subdomain host can push that ControlPath past the OS's ~100-byte
+    Unix-socket path limit, silently defeating the whole stanza -- swap in `%C` (a hash of user,
+    host, and port) instead of `%r@%h:%p` if `<host>`/your username are long. The keepalive lines
+    matter here too: without them a silently-dead connection (NAT/VPN drop, box reboot) can leave a
+    stale master that a later publish hangs against instead of cleanly reconnecting.
+
+    Windows caveat: which ssh.exe this script's `& ssh`/`& scp` calls actually invoke depends on
+    PATH order -- run `Get-Command ssh` to check. If it resolves to the Windows-optional-feature
+    client (`C:\Windows\System32\OpenSSH\ssh.exe`, "Win32-OpenSSH"), do NOT add this stanza: that
+    client doesn't gracefully ignore ControlPath, it errors out ("getsockname failed: Not a
+    socket") and aborts the connection -- turning every ssh/scp call in this script into a hard
+    failure, not a missed optimization. If `Get-Command ssh` instead resolves to Git for Windows'
+    own bundled OpenSSH build (common when Git for Windows is on PATH ahead of System32), or the
+    calls run under WSL/Git Bash/a Linux/macOS client, ControlMaster generally works as intended.
+    When in doubt, test one `ssh -o ControlMaster=auto -o ControlPath=~/.ssh/cm-test <host>` by
+    hand before wiring the stanza into your `~/.ssh/config`.
 
 .PARAMETER Server
     SSH target for the box (user@host).
