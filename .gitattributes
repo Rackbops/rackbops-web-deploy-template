@@ -1,2 +1,14 @@
+# Everything is LF, in the index and in the working tree, on every platform.
 * text=auto eol=lf
+
+# The scaffolds carry their own rule so their LF does not depend on the `*` line above.
+# gitattributes is last-match-wins per attribute, so this keeps holding if that line is
+# ever narrowed. It matters because most of these are read by Linux tooling once copied
+# onto a box (bash, systemd, nginx), where a stray CR is at best noise and at worst fatal.
+# If a BINARY `.example` is ever added, exempt it here with `-text`: unlike `text=auto`,
+# a forced `text` normalizes regardless of content and would corrupt it.
+# NOTE: the `.example` suffix is why `*.ps1` below does NOT match publish-scp.ps1.example.
+*.example text eol=lf
+
+# Forward cover for a real .ps1, should one ever land here. Matches nothing today.
 *.ps1 text eol=lf
