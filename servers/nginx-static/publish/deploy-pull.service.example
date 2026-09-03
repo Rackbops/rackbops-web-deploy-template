@@ -26,6 +26,31 @@
 # its own, though a consumer can also add ConnectTimeout=/ServerAliveInterval=/ServerAliveCountMax=
 # to whatever SSH alias deploy-pull.sh's git pull uses, as a faster-triggering complementary guard
 # (see the template README's deploy-key SSH alias block).
+#
+# WHAT THE KILL LEAVES BEHIND depends on which phase it lands in. Killing the FETCH is clean --
+# nothing is left over and the next run simply refetches. Killing the CHECKOUT is not: git writes
+# worktree files one at a time, so an interrupted checkout can leave TRACKED files that no longer
+# match HEAD, or -- if the incoming commit was ADDING a file -- an UNTRACKED one sitting at a path
+# git now wants to create, which blocks a pull just as surely. A SIGKILL can also leave
+# .git/index.lock behind. Nothing here clears itself, and the web root is served straight off that
+# worktree, so the half-applied tree stays live.
+#
+# Two shapes, and the quieter one is the dangerous one. If the incoming commit touches the damaged
+# path, the next `git pull --ff-only` REFUSES ("Your local changes ... would be overwritten") --
+# loud, and the unit fails every tick. If it does not touch that path, the pull SUCCEEDS and
+# leaves the damage alone, because a fast-forward only writes paths that differ between the two
+# commits: without help that is exit 0, unit green, and a broken file served indefinitely.
+# deploy-pull.sh therefore also compares the worktree against HEAD after a successful pull, and
+# logs a NOTE when they differ -- a note rather than a failure, because a submodule bump, a
+# filemode change or an app writing to a tracked path all look identical here, and failing the
+# unit on those would break a working deployment.
+#
+# It reports and never repairs: a dirty tree is indistinguishable from someone having edited files
+# on the box. Recovery is `git reset --hard @{u}` -- it overwrites both a mismatched tracked file
+# and an untracked one colliding with an incoming path, discards a box-side commit, and leaves
+# every OTHER untracked file alone. `@{u}` is the part that matters: plain `reset --hard` with no
+# ref targets current HEAD, which is a no-op here. A submodule bump needs `git submodule update`
+# instead.
 
 [Unit]
 Description=<app> -- pull the latest site from GitHub

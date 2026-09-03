@@ -30,8 +30,86 @@ main() {
 
   local before after
   before="$(git rev-parse HEAD)"
-  git pull --ff-only --quiet
+
+  # If the pull fails, git has already said what it refused to do -- add only the box-specific
+  # facts it can't know, and never guess at a cause: a failure here is just as likely to be the
+  # network, DNS, or credentials as anything about this clone, and in those cases git's message
+  # above IS the whole answer. So the block below adds nothing unless this clone's own state is
+  # part of the story.
+  if ! git pull --ff-only --quiet; then
+    local lock status_out ahead
+    lock="$(git rev-parse --absolute-git-dir)/index.lock"
+    # Plain --porcelain, NOT -uno: an UNTRACKED file at a path the incoming commit also wants to
+    # create blocks --ff-only too ("untracked working tree files would be overwritten by merge"),
+    # the same as a killed checkout leaving a tracked file behind. Listing an untracked entry
+    # isn't blaming it as the cause -- the line below says so.
+    status_out="$(git status --porcelain 2>/dev/null || true)"
+    ahead="$(git rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)"
+    if [[ -e "$lock" || -n "$status_out" || "$ahead" != 0 ]]; then
+      echo "<app>: pull failed. Git's reason is above; this clone's own local state, which may or"
+      echo "<app>:   may not be why -- an unrelated leftover file can coincide with a real network"
+      echo "<app>:   or auth failure:"
+      # `if` blocks, not `cond && echo`: not because the short form would abort here under
+      # `set -e` (bash exempts every element of a && list but the last, which is exactly why the
+      # `(( flag )) && echo` lines near the bottom of this file are safe mid-function) but because
+      # a wrong belief about that exemption is an easy mistake to make -- this comment used to
+      # make it.
+      if [[ -e "$lock" ]]; then
+        echo "<app>:   * stale lock from a killed run. If no git is running here:  rm $lock"
+      fi
+      if [[ -n "$status_out" ]]; then
+        echo "<app>:   * local changes (M/D = tracked, ?? = untracked -- either can block a pull):"
+        # `sed -n 1,10p`, NOT `| head -10`: head closes the pipe after 10 lines, and on a big
+        # list echo then dies of SIGPIPE, which pipefail+set -e turn into an abort right here --
+        # silently swallowing everything below, in exactly the large-tree case this exists for.
+        sed -n "1,10{s|^|<app>:       |;p;}" <<< "$status_out"
+        local n_more
+        n_more=$(( $(wc -l <<< "$status_out") - 10 ))
+        (( n_more > 0 )) && echo "<app>:       ... and $n_more more"
+      fi
+      if (( ahead > 0 )); then
+        echo "<app>:   * $ahead commit(s) here that upstream lacks -- never commit on the box."
+      fi
+      echo "<app>:   To force this clone to exactly match upstream:"
+      echo "<app>:     git -C $REPO_DIR reset --hard @{u}"
+      echo "<app>:   DESTROYS tracked edits and box-side commits, and overwrites an untracked file"
+      echo "<app>:   sitting at a path upstream wants to create -- it does NOT touch any OTHER"
+      echo "<app>:   untracked file. @{u} matters: reset --hard with no ref targets current HEAD,"
+      echo "<app>:   which is a no-op here. (If the branch has no upstream configured, @{u} won't"
+      echo "<app>:   resolve -- fix the tracking first.)"
+    fi
+    return 1
+  fi
+
   after="$(git rev-parse HEAD)"
+
+  # A successful pull is NOT proof the served content is right. The web root IS this worktree, so
+  # tracked files that don't match HEAD are being served in that state -- and a fast-forward only
+  # writes paths that DIFFER between the two commits, so a file left deleted or corrupt by a
+  # killed checkout is passed over unless a later commit happens to touch that same path. Without
+  # this line that case is invisible: pull exits 0 and the file stays wrong indefinitely.
+  #
+  # WARNS, does not fail. Several perfectly healthy setups leave tracked files "modified" forever
+  # -- an upstream submodule bump (the gitlink moves, the submodule worktree doesn't), a chmod
+  # that changes filemode, an app that writes to a tracked path. Failing the unit on those would
+  # convert a working deployment into one that fails every tick, which is worse than the wedge
+  # this is meant to surface. It also must not `return` here: the post-arrival reminders below
+  # still need to run, since the pull DID land and compose.yaml/nginx.conf may have changed.
+  local worktree_drift
+  worktree_drift="$(git status --porcelain -uno || true)"
+  if [[ -n "$worktree_drift" ]]; then
+    echo "<app>: NOTE -- these tracked files do not match HEAD, so the web root is serving them"
+    echo "<app>:   in that state. Cause could be a run killed mid-checkout, an edit made on the"
+    echo "<app>:   box, a submodule pointer, or a filemode change -- check before assuming:"
+    sed -n "1,10{s|^|<app>:       |;p;}" <<< "$worktree_drift"
+    local n_more_ok
+    n_more_ok=$(( $(wc -l <<< "$worktree_drift") - 10 ))
+    (( n_more_ok > 0 )) && echo "<app>:       ... and $n_more_ok more"
+    echo "<app>:   To make the tree match upstream exactly (DESTROYS local edits; needs @{u} to"
+    echo "<app>:   resolve, so fix the branch's tracking first if it has none):"
+    echo "<app>:     git -C $REPO_DIR reset --hard @{u}"
+    echo "<app>:   A submodule bump needs \`git submodule update --init --recursive\` instead."
+  fi
 
   if [[ "$before" == "$after" ]]; then
     echo "<app>: up to date at ${after:0:7}, nothing to do."

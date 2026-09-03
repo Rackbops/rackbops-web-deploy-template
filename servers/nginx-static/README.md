@@ -154,7 +154,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now <app>-deploy.timer
 # verify:
 sudo systemctl start <app>-deploy.service                 # force one run
-journalctl -u <app>-deploy.service -n 20 --no-pager       # "up to date" or "updated <a> -> <b>"
+journalctl -u <app>-deploy.service -n 20 --no-pager       # "up to date", "updated <a> -> <b>",
+                                                            # or (rare) a wedge -- see the .service
 systemctl list-timers <app>-deploy.timer --no-pager       # next scheduled run
 ```
 
