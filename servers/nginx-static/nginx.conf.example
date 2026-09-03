@@ -13,7 +13,7 @@
 # served live off the read-only mount with no restart either way.
 server {
     # Match compose.yaml's CONTAINER_PORT. 80 is the stock default (keep it unless you have a
-    # reason not to); a custom port here (e.g. 8793) must equal the right-hand side of the
+    # reason not to); if you set a custom port here it must equal the right-hand side of the
     # "127.0.0.1:<HOST_PORT>:<CONTAINER_PORT>" publish.
     listen 80;
 

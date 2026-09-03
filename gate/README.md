@@ -5,8 +5,10 @@ loopback-bound origin. It is identical whether that origin is `nginx-static` or 
 server, which is why it lives here once rather than per-server. Nothing here logs into Cloudflare
 for you — the dashboard/API steps are yours to run; this is the exact path.
 
-Everything below uses `<PLACEHOLDERS>` — there are no real hostnames, IPs, zone IDs, tunnel UUIDs,
-account emails, or AUD tags in this repo (it's public). Fill them in from your own account.
+Everything below uses `<PLACEHOLDERS>` — no real hostnames, IPs, zone IDs, tunnel UUIDs, account
+emails, or AUD tags are committed anywhere in this repo (it's public). Fill them in from your own
+account. (Consumer **repo** names do appear throughout — those are provenance citations, not
+infrastructure identifiers.)
 
 Two tunnel styles exist and the DNS/ingress steps differ between them:
 
@@ -137,6 +139,6 @@ all Cloudflare-side config plus the loopback bind.
 
 - The repo-root [`../README.md`](../README.md) — the one-gate-many-servers model and how to pick a
   base server.
-- roshne's `Tooling` repo (private) carries the worked examples this runbook generalizes
+- The maintainer's `Rackbops/Tooling` repo (private) carries the worked examples this runbook generalizes
   (`docs/web-app-remote-access.md` for the locally-managed-tunnel variant, and per-app worked
   examples) — for the maintainer's reference; not needed to use this template.
