@@ -23,7 +23,7 @@
          no-network) delete-then-copy -- so the window where the live dir is momentarily empty is
          milliseconds, not however long an scp over the network takes.
 
-    Why this shape (all proven the hard way on the reference implementation, roshne/Tooling's
+    Why this shape (all proven the hard way on the reference implementation, Rackbops/Tooling's
     tools-site):
       * A network blip or interrupted scp leaves the live site exactly as it was -- it never
         empties the live dir with nothing to replace it.

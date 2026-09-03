@@ -160,7 +160,8 @@ Pick the mount that puts every asset the page references under the web root.
 **The repo-root mount is pull-model only** — the push model's `publish-scp.ps1` refuses to target
 it (`$LocalDirName` can't be `.`); only a pull-model box's clone doubles as both the stack dir and
 the web root. **It's also currently inferred, not extracted from a running deployment** — no
-consumer in this repo's "Known consumers" table runs it yet, per this repo's ground-truth rule.
+consumer in [`CONTEXT.md`](../../CONTEXT.md)'s "Known consumers" table runs it yet, per this repo's
+ground-truth rule.
 Two consequences to know before using it:
 
 - It serves EVERYTHING in the clone unless `nginx.conf` denies it — `.git/`, `compose.yaml`,
@@ -203,4 +204,4 @@ Two consequences to know before using it:
 - **SPA fallback** (`try_files $uri $uri/ /index.html;`) for a client-routed build (React/Vite,
   like `tools-site`) so deep links resolve to the app.
 - **Plain static** (`try_files $uri $uri/ =404;` + an optional `error_page 404`) for hand-authored
-  HTML (like `rackbops.com`) so unknown paths 404 honestly.
+  HTML (like the `rackbops` one-pager) so unknown paths 404 honestly.

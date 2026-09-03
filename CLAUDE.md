@@ -27,12 +27,12 @@ from a **real, running** implementation, and that provenance is the ground truth
 one, check it against its source rather than inventing behavior:
 
 - `servers/nginx-static/` (`compose.yaml.example`, `nginx.conf.example`,
-  `publish/publish-scp.ps1.example`) -- extracted from `roshne/Tooling`'s `tools-site/` (the `#281`
+  `publish/publish-scp.ps1.example`) -- extracted from `Rackbops/Tooling`'s `tools-site/` (the `#281`
   deploy artifact; the scp script's stage-then-swap design and its `$LASTEXITCODE`/empty-build
   guards were proven and adversarially reviewed there).
 - `servers/nginx-static/publish/deploy-pull.sh.example` + `.service`/`.timer` -- extracted from
-  `roshne/rackbops`'s `deploy/` (its live git-pull-on-a-systemd-timer auto-deploy).
-- `gate/README.md` -- generalized from the Cloudflare Tunnel + Access rollouts in `roshne/Tooling`'s
+  `Rackbops/rackbops`'s `deploy/` (its live git-pull-on-a-systemd-timer auto-deploy).
+- `gate/README.md` -- generalized from the Cloudflare Tunnel + Access rollouts in `Rackbops/Tooling`'s
   `docs/*-remote-access.md` (private), proven identical across origins in `Tooling#282`.
 
 Mark any claim you can't trace to one of those **inferred** or **unknown**, per personal's Claims
@@ -50,17 +50,24 @@ scrub every real value.
 
 ## Irreversible: the repo NAME is a shipped identifier
 
-Consumers reference this repo by name (`roshne/rackbops-web-deploy-template`) in their own docs
-and in `Tooling`'s scaffold pointer. Renaming it breaks those references invisibly -- treat a
-rename as an escalation (create-new + redirect, per personal), not a casual change. (It was
-renamed once, gated- -> web-, right after creation while nothing yet consumed it -- the safe
-window; GitHub's redirect covers the old URL regardless.)
+Consumers reference this repo by name (`Rackbops/rackbops-web-deploy-template` -- the canonical
+slug) in their own docs and in `Tooling`'s scaffold pointer. Renaming it breaks those references
+invisibly -- treat a rename as an escalation (create-new + redirect, per personal), not a casual
+change. (It was renamed once, gated- -> web-, right after creation while nothing yet consumed it --
+the safe window; GitHub's redirect covers the old URL regardless.)
+
+The repo also **moved owner**, roshne -> the `Rackbops` org, so `roshne/rackbops-web-deploy-template`
+still resolves but only by GitHub's owner redirect -- which dies the moment anything is created at
+that name. Write `Rackbops/...` in anything new. `Tooling`'s scaffold pointer still carries the old
+spelling (`Rackbops/Tooling#349` tracks that sweep).
 
 ## Testing & checks
 
-**No CI on this repo** -- by design (matches `addon-ci`). The `.example` files are copied and
-adapted per consumer, who owns testing their own copy. Before committing a change here, apply the
-same floor by hand that a consumer's CI would:
+**No lint/test CI on this repo** -- by design (matches `addon-ci`). The `.example` files are copied
+and adapted per consumer, who owns testing their own copy. The one workflow present,
+`.github/workflows/push-notify.yml`, is the maintainer's Discord push notifier -- repo plumbing, not
+template content, and not a check. Before committing a change here, apply the same floor by hand
+that a consumer's CI would:
 
 - **PowerShell** -- parse-check `servers/nginx-static/publish/publish-scp.ps1.example` with
   `[System.Management.Automation.Language.Parser]::ParseFile(...)` (the exact check `Tooling`'s

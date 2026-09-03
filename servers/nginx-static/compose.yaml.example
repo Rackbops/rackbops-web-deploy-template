@@ -19,7 +19,8 @@ services:
       #     tunnel ingress rule in ../../gate/README.md.
       #   * CONTAINER_PORT: whatever nginx.conf's `listen` says. Keep it 80 (the stock default)
       #     and there's nothing to change in nginx.conf; use a custom port only if you have a
-      #     reason to. (rackbops keeps 80; tools-site listens on 8793 -- both are fine.)
+      #     reason to. (Of the two reference consumers, one keeps 80 and one uses a custom port --
+      #     both are fine.)
       - "127.0.0.1:<HOST_PORT>:<CONTAINER_PORT>"
     volumes:
       # WEB-ROOT KNOB -- the left side is which local directory becomes nginx's web root. It is

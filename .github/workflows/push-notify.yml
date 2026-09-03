@@ -1,11 +1,12 @@
 name: push-notify
 
 # Post one Discord notification per push to main (as Github-Repo-Updates), via the
-# shared reusable workflow in roshne/addon-ci. Because this repo squash-merges, a push
-# to main IS a merged PR -- so this is "tell me when a PR lands", one message per merge.
+# shared reusable workflow in roshne/addon-ci. A push to main -- a squash-merged PR or
+# a direct commit -- posts once, unless every path in it is doc-only per paths-ignore
+# below. So: "tell me when main moves in a way that isn't just prose."
 #
 # Triggers on main ONLY: a feature-branch push posts nothing, and the branch push plus
-# its squash-merge can't double-post (the failure the native webhook had -- roshne/Tooling#111).
+# its squash-merge can't double-post (the failure the native webhook had -- Rackbops/Tooling#111).
 #
 # addon-ci stays on roshne deliberately -- it is a PUBLIC reusable-workflow library, and
 # calling it across owners is fine (see Rackbops/Tooling#310).

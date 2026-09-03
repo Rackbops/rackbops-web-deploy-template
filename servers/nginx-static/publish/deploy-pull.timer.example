@@ -2,8 +2,8 @@
 #
 # Copy to `deploy/<app>-deploy.timer` in your app repo, adapt <app>, and install on the box as a
 # SYSTEM unit under /etc/systemd/system/ (paired with the .service; see this server's README).
-# `Persistent=true` catches up a missed run after the box was off. Tune OnUnitActiveSec to how
-# quickly you want a push to go live (5 min is the reference default; shorter polls GitHub more often).
+# `OnBootSec=` is what runs it after the box comes back up. Tune OnUnitActiveSec to how quickly you
+# want a push to go live (5 min is the reference default; shorter polls GitHub more often).
 
 [Unit]
 Description=<app> -- poll GitHub for site updates
@@ -15,8 +15,17 @@ Description=<app> -- poll GitHub for site updates
 # outright, logging "Refusing to start, unit <x>.service to trigger not loaded" to the journal --
 # same as the implicit pairing would. Keep this in sync with whatever you name the .service file.
 Unit=<app>-deploy.service
+# Runs 2 min after boot, then every 5 min after each run. Keep BOTH: OnUnitActiveSec= alone is
+# measured from the last activation, so after a reboot it would never fire until something started
+# the service by hand -- the box would silently stop auto-deploying. OnBootSec= is what restarts
+# the cycle.
 OnBootSec=2min
 OnUnitActiveSec=5min
+# Kept only as forward cover for a consumer who switches to OnCalendar=, NOT because it does
+# anything for the schedule above: systemd.timer(5) says Persistent= "only has an effect on timers
+# configured with OnCalendar=", and this timer is monotonic. It does still write a stamp file on
+# every trigger, but only the calendar path reads that back -- so it is NOT what catches the box up
+# after downtime here (OnBootSec= above is). Delete the line if you'd rather carry nothing unused.
 Persistent=true
 
 [Install]
