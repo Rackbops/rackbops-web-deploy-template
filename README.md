@@ -1,7 +1,7 @@
 # rackbops-web-deploy-template
 
 A copyable template for deploying a web thing **behind a Cloudflare-Access-gated loopback origin**,
-the same way every time. The distinctive, fully-shared spine — a container bound to `127.0.0.1`
+the same way every time. The distinctive, fully-shared spine — an origin bound to `127.0.0.1`
 only, fronted by a Cloudflare Tunnel + Access so only allow-listed accounts reach it — is
 **origin-agnostic**: it's identical whether that loopback port is answered by nginx serving static
 files or by an app process. This repo pairs that shared **gate** with pluggable **base servers**.
@@ -34,9 +34,9 @@ shared gate; only how that port is served is per-server.**
 ## Using it
 
 1. Pick a base server under `servers/` (today: `nginx-static`). Copy its `.example` files into your
-   app repo, fill in the placeholders, and follow its `README.md` to get the container up on
-   loopback.
-2. Follow [`gate/README.md`](gate/README.md) to put the Cloudflare Access gate in front of it.
+   app repo, fill in the placeholders, and follow its `README.md` to get the origin running.
+2. Follow [`gate/README.md`](gate/README.md): its step 0 verifies the loopback bind, and the rest
+   puts the Cloudflare Access gate in front of it.
 
 ## Base servers
 

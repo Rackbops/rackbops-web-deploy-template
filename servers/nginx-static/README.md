@@ -87,14 +87,13 @@ pre-create.
 
 ```bash
 cd /opt/stacks/<app> && sudo docker compose up -d
-# verify it serves on loopback only:
-curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:<HOST_PORT>/          # 200
-ss -ltnp | grep <HOST_PORT>                                                     # bound 127.0.0.1, NOT 0.0.0.0
 # if you kept the /healthz block in nginx.conf:
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:<HOST_PORT>/healthz   # 200
 ```
 
-Then put the Cloudflare Access gate in front of it: [`../../gate/README.md`](../../gate/README.md).
+That's this server's half done. Now go to [`../../gate/README.md`](../../gate/README.md): its
+step 0 verifies the loopback bind — that bind is the gate's security floor, so the check lives
+there rather than in each server README — and the rest of it puts the Access gate in front.
 
 ## Push or pull?
 
