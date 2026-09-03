@@ -54,6 +54,24 @@
       * Uses only ordinary coreutils on the box (find, cp -a, rm -rf) -- no rsync (not always
         installed).
 
+    Connection reuse (optional): a publish opens several separate ssh/scp connections to $Server --
+    the staging setup, the transfer, the swap, and the cleanup -- each paying its own TCP + SSH
+    handshake and auth round-trip. On a high-latency link, a jump host, or a server with 2FA/
+    certificate challenges, that cost adds up for a script meant to be run often. Add a
+    ControlMaster stanza for this box's Host to your ~/.ssh/config and scp plus the later ssh calls
+    will reuse the first connection instead of renegotiating:
+
+      Host <host>
+        ControlMaster auto
+        ControlPersist 10m
+        ControlPath ~/.ssh/cm-%r@%h:%p
+
+    Windows caveat: Win32-OpenSSH -- the ssh.exe on Windows 10/11, including the one PowerShell
+    invokes below -- does not implement ControlMaster; ControlPath needs a Unix domain socket that
+    Windows doesn't expose the same way, so the option is accepted but no master connection is ever
+    created. The stanza above only helps when the ssh/scp calls run under WSL, Git Bash, or a Linux/
+    macOS client -- a native Windows ssh.exe still pays the full handshake for each connection above.
+
 .PARAMETER Server
     SSH target for the box (user@host).
 
