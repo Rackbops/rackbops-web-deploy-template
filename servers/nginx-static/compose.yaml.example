@@ -32,6 +32,22 @@ services:
       #     both are fine.)
       - "127.0.0.1:<HOST_PORT>:<CONTAINER_PORT>"
     volumes:
+      # BOTH sources below must exist on the box BEFORE the first `up` -- except with the
+      # repo-root web-root knob, where the web root IS the stack dir and only nginx.conf applies.
+      # Docker's short mount syntax silently creates a missing source as a ROOT-OWNED DIRECTORY,
+      # and neither failure announces itself as one:
+      #   * web root missing -> the container starts and runs normally, serving an empty
+      #     root-owned dir (a bare `/` then 403s). The first publish-scp.ps1 run dies in the swap
+      #     with `Permission denied` -- it runs as <user>, the dir is root:root 755. Re-running
+      #     never fixes it: remove or chown that dir first, then publish again.
+      #   * nginx.conf missing -> a DIRECTORY of that name, and the container fails to START:
+      #     "not a directory: Are you trying to mount a directory onto a file (or vice-versa)?"
+      #     -- nginx never runs, so there is no nginx error to read.
+      # Both dirs are created even when the start fails, so delete them before retrying.
+      # The server README's order avoids all of this. Dockge does not: its editor writes only
+      # compose.yaml and .env, and Deploy runs `docker compose up -d` straight away -- so put
+      # nginx.conf and your content on the box by other means BEFORE you deploy the stack.
+      #
       # WEB-ROOT KNOB -- the left side is which local directory becomes nginx's web root. It is
       # NOT always a subdir called `dist`/`site`:
       #   * a build artifact:      ./dist:/usr/share/nginx/html:ro   (e.g. a Vite/React build)
