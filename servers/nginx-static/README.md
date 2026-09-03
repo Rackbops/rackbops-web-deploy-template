@@ -44,8 +44,8 @@ timer's `User=<user>` service runs `git pull` as `<user>`, and a clone owned by 
 trips git's `dubious ownership` check on every run (cloning as root then `chown`-ing after also
 works, but only with `chown -R`, which is easy to forget and leaves no obvious symptom until the
 timer starts failing). If you're logged in as some other account, run the clone as `<user>` with
-`sudo -u <user> -H git clone ...` (`-H` sets `HOME` to `<user>`'s, matching the service's
-`Environment=HOME=` line).
+`sudo -u <user> -H git clone ...` (`-H` sets `HOME` to `<user>`'s, which is what the service gets
+too — systemd sets it from the account because the unit sets `User=`).
 
 For a **private repo**, give `<user>` a read-only deploy key *before* cloning, so this clone and
 every later `git pull` authenticate non-interactively:
@@ -62,6 +62,12 @@ Host github-<app>
   User git
   IdentityFile ~/.ssh/<app>_deploy
   IdentitiesOnly yes
+  # Fail a stalled connection instead of hanging on it. OpenSSH's ServerAliveInterval defaults
+  # to 0 (off), so a session that stays open but stops responding is invisible to ssh and git.
+  # The unit's TimeoutStartSec is the backstop; these trip faster and more precisely.
+  ConnectTimeout 15
+  ServerAliveInterval 15
+  ServerAliveCountMax 3   # this one is already the default; listed so the trio reads as a set
 EOF
 chmod 600 ~/.ssh/config
 # then the mkdir + chown lines above, and clone through the alias in place of <REPO_URL>:
@@ -70,6 +76,12 @@ git clone git@github-<app>:<OWNER>/<REPO>.git /opt/stacks/<app>
 
 Never commit on the box: once `main` moves past a commit made here, the timer's `git pull
 --ff-only` refuses (loudly, in the journal) rather than merging — the box is a pure consumer.
+
+**Cloning over HTTPS instead?** The keepalive settings above are SSH-only. Git's HTTPS transport
+has no stall detection on by default either, so set the equivalent for that clone:
+`git -C /opt/stacks/<app> config http.lowSpeedLimit 1000` and `... http.lowSpeedTime 30` abort a
+transfer that drops below ~1 KB/s for 30s. Either way the service's `TimeoutStartSec` is the
+backstop — see [`deploy-pull.service.example`](publish/deploy-pull.service.example).
 
 ### Push model: mkdir, then scp
 
@@ -125,7 +137,7 @@ Delete whichever pair you don't use.
 ### Installing the pull timer (box side, one time)
 
 The `.service`/`.timer` are **system** units (they run as a system unit that drops to `<user>` via
-`User=`/`HOME=` — that drop-to-user form is why they're system units, not `--user` ones). In your
+`User=` — that drop-to-user form is why they're system units, not `--user` ones). In your
 app repo, copy `deploy-pull.service.example` to `deploy/<app>-deploy.service` and
 `deploy-pull.timer.example` to `deploy/<app>-deploy.timer` — both change stem AND drop `.example`,
 whereas `deploy-pull.sh.example` becomes `deploy/deploy-pull.sh`, keeping its stem (the `.service`'s

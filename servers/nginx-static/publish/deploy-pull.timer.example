@@ -22,6 +22,11 @@ Unit=<app>-deploy.service
 # measured from the last activation, so after a reboot it would never fire until something started
 # the service by hand -- the box would silently stop auto-deploying. OnBootSec= is what restarts
 # the cycle.
+# Shortening OnUnitActiveSec does NOT require changing the .service's TimeoutStartSec. A unit
+# still active when the timer elapses is left running rather than restarted (systemd.timer(5)),
+# but that dropped tick still advances the schedule -- so the cycle picks up on its own once the
+# running pull finishes or hits its timeout. Don't shrink the timeout to "fit" the poll; that only
+# risks killing healthy pulls.
 OnBootSec=2min
 OnUnitActiveSec=5min
 # Kept only as forward cover for a consumer who switches to OnCalendar=, NOT because it does

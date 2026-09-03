@@ -5,7 +5,7 @@
 # pull timer" in the template README -- relative paths won't resolve from your repo:
 #   https://github.com/Rackbops/rackbops-web-deploy-template/blob/main/servers/nginx-static/README.md
 #
-# It runs as a system unit but drops to <user> via User=/HOME= below -- that drop-to-user form is
+# It runs as a system unit but drops to <user> via User= below -- that drop-to-user form is
 # exactly why it's a system unit, not a `--user` one. Dropping to a DIFFERENT user is the part an
 # ordinary user manager can't do: systemd.exec says that for "user services of any other user"
 # than root, "switching user identity is not permitted, hence the only valid setting is the same
@@ -22,5 +22,32 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=<user>
-Environment=HOME=/home/<user>
+# NOT Environment=HOME=...: systemd already sets $HOME (and $LOGNAME, $SHELL) from <user>'s passwd
+# entry because User= is set -- see SetLoginEnvironment= in systemd.exec(5). Pinning it here would
+# be a second copy of the home path that silently goes stale if the account ever moves.
+# $HOME does still matter, for exactly one thing: git reads it to find ~/.gitconfig. ssh does NOT
+# -- it resolves ~/.ssh from the passwd entry itself -- so the deploy key works either way.
+# The one account shape where systemd sets no $HOME is one whose passwd home is empty or "/";
+# give <user> an ordinary home directory and this is a non-issue.
 ExecStart=/bin/bash /opt/stacks/<app>/deploy/deploy-pull.sh
+
+# WITHOUT THIS, ONE HUNG PULL STOPS DEPLOYS FOREVER. systemd.service(5): the start timeout
+# "Defaults to DefaultTimeoutStartSec= ... except when Type=oneshot is used, in which case the
+# timeout is disabled by default" -- so a `git pull` stalled on a half-open connection waits
+# indefinitely. The timer does not rescue it either: systemd.timer(5) says a unit "already active
+# at the time the timer elapses ... is not restarted, but simply left running". Net effect is a
+# service parked in `activating`, no further deploys, and nothing reported as failed.
+#
+# RAISE THIS if your fetches are large or your uplink is slow. git's fetch is not resumable, so a
+# healthy pull needing longer than the cap is killed and restarted from zero on every tick and
+# never finishes. It does NOT need to stay under the timer's poll interval: a tick that finds the
+# previous run still going is dropped, but it still advances the schedule, so a long timeout costs
+# extra staleness during a hang, never a permanent stall.
+#
+# What the kill leaves behind depends on where it lands. Interrupting the FETCH is clean -- the
+# next run simply refetches. Interrupting the CHECKOUT can leave a worktree that no longer matches
+# HEAD, and every later `git pull --ff-only` then refuses ("Your local changes ... would be
+# overwritten"). That is loud, unlike the silent hang this replaces -- the unit goes to `failed`
+# on every tick -- but it does NOT self-heal. Clear it on the box with
+# `git -C /opt/stacks/<app> reset --hard`, plus `rm .git/index.lock` if a SIGKILL left one.
+TimeoutStartSec=4min
