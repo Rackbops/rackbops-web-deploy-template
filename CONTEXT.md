@@ -20,8 +20,9 @@ still resolve by GitHub's owner redirect, but `Rackbops/...` is canonical.)
   and empty-build guards were proven and adversarially reviewed there (two review rounds).
 - **`Rackbops/rackbops` `deploy/`** -- the reference git-pull consumer, and the **pull (git timer)**
   half. Source of `servers/nginx-static/publish/deploy-pull.{sh,service,timer}.example` (its live
-  `git pull --ff-only` on a **systemd system** timer -- installed under `/etc/systemd/system/` via
-  `sudo`, running as a system unit that drops to a user via `User=`/`HOME=`; `OnUnitActiveSec=5min`).
+  `git pull --ff-only` on a **systemd system** timer, `OnUnitActiveSec=5min`). Why that is a system
+  unit rather than a `--user` one is spelled out in the `.service` scaffold's header, and
+  summarised in the server README's install section -- not re-derived here.
   Its own bring-up runbook (`DEPLOY.md` steps 1a/1b) is the source for the pull-model clone +
   deploy-key block in the nginx-static README.
 - **`Rackbops/Tooling` `docs/*-remote-access.md`** (private) -- source of `gate/README.md`. The

@@ -6,9 +6,13 @@
 #   https://github.com/Rackbops/rackbops-web-deploy-template/blob/main/servers/nginx-static/README.md
 #
 # It runs as a system unit but drops to <user> via User=/HOME= below -- that drop-to-user form is
-# exactly why it's a system unit, not a `--user` one (`systemctl --user` rejects User=). Paired
-# with the .timer, which schedules it. The service body stays privilege-light: no docker, no sudo
-# -- it only pulls and logs (installing the unit needs sudo; running it does not).
+# exactly why it's a system unit, not a `--user` one. Dropping to a DIFFERENT user is the part an
+# ordinary user manager can't do: systemd.exec says that for "user services of any other user"
+# than root, "switching user identity is not permitted, hence the only valid setting is the same
+# user the user's service manager is running as". So User= is accepted in a user unit, it just
+# can't name anyone else there. Paired with the .timer, which schedules it. The service body stays
+# privilege-light: no docker, no sudo -- it only pulls and logs (installing the unit needs sudo;
+# running it does not).
 
 [Unit]
 Description=<app> -- pull the latest site from GitHub

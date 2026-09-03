@@ -42,7 +42,7 @@ shared gate; only how that port is served is per-server.**
 
 | Server | Origin | Restart on update? | Status |
 |---|---|---|---|
-| [`nginx-static`](servers/nginx-static/) | stock `nginx:alpine`, files on a read-only mount | No — nginx re-reads files per request | **Built** (extracted from real consumers) |
+| [`nginx-static`](servers/nginx-static/) | stock `nginx:alpine`, files on a read-only mount | Not for content; `nginx.conf` changes do — see its [Updating](servers/nginx-static/README.md#updating) | **Built** (extracted from real consumers) |
 | _a second static server_ (e.g. Node `serve`, Caddy) | serves files a different way | varies | Future — add when a real consumer needs it |
 | _a dynamic app server_ (Node/Bun/Python process) | a built image / live process | Yes — a process must reload code | Future — different serve/publish, **same gate** |
 
