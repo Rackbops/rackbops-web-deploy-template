@@ -8,7 +8,11 @@
     when the box cannot (or should not) hold a clone of the repo -- a private repo you can't or
     won't give the box a read-only deploy key for, or a box with no repo access. If the box CAN
     clone the repo directly, prefer the pull model instead (publish/deploy-pull.sh + the systemd
-    timer units) -- see README.md's "Push or pull?".
+    timer units).
+
+    Template, incl. the "Push or pull?" section behind that choice -- relative paths won't resolve
+    from your repo:
+      https://github.com/Rackbops/rackbops-web-deploy-template/blob/main/servers/nginx-static/README.md#push-or-pull
 
     No restart needed on the box: nginx reads files per request off the read-only mount. (A
     `docker compose restart` is only needed when nginx.conf itself changes, which this never

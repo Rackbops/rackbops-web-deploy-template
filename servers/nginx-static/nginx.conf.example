@@ -1,5 +1,8 @@
 # <app> -- served by nginx:alpine. Copy to `nginx.conf` in your app repo and adapt.
 #
+# Template (relative paths won't resolve from your repo):
+#   https://github.com/Rackbops/rackbops-web-deploy-template/blob/main/servers/nginx-static/README.md
+#
 # Mounted at /etc/nginx/conf.d/default.conf -- despite the name you may give it, this is a
 # `server {}` FRAGMENT, not a full nginx.conf: the base image's real nginx.conf already supplies
 # http{}/events{} and includes conf.d/*.conf. Content-free by design. Whether the box picks up a
@@ -28,10 +31,11 @@ server {
     }
 
     # Deny dotfiles/dirs (.git, .env, ...) except /.well-known/ (ACME challenges etc.) -- matters
-    # most for the repo-root web-root mount (see README's "Web-root knob"), where .git/ would
-    # otherwise be directly readable; harmless elsewhere since these paths won't exist under a
-    # ./dist or ./site mount. `return 404` (not `deny all`) is what actually applies here -- it
-    # fires in nginx's rewrite phase, before the access-phase `deny` would even run.
+    # most for the repo-root web-root mount (the "#web-root-knob" section of the template README
+    # linked at the top of this file), where .git/ would otherwise be directly readable; harmless
+    # elsewhere since these paths won't exist under a ./dist or ./site mount. `return 404` (not
+    # `deny all`) is what actually applies here -- it fires in nginx's rewrite phase, before the
+    # access-phase `deny` would even run.
     location ~ /\.(?!well-known/) {
         return 404;
     }
