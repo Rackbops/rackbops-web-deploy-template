@@ -48,8 +48,9 @@ from it rather than editing the `.example` free-hand.
   `Rackbops/rackbops`.)
 - **A `-p 127.0.0.1:<port>:<port>` publish is NOT reachable via a Docker bridge gateway** -- the
   DNAT is destination-scoped to `127.0.0.1`, so a co-located same-host check must hit loopback, not
-  `172.17.0.1`. Relevant if a future server variant wants a co-located liveness check.
-  (`Tooling#283`.)
+  `172.17.0.1`. Recorded in `gate/README.md` §0 as a caveat for anyone adding an automated probe
+  from another container; still the constraint to check first if a future server variant wants a
+  co-located liveness check. (`Tooling#283`.)
 
 ---
 

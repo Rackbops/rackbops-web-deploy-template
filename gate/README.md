@@ -20,13 +20,15 @@ Two tunnel styles exist and the DNS/ingress steps differ between them:
 
 ---
 
-## 0. Prerequisite: your base server is up on loopback
+## 0. Check the origin answers on loopback, and only on loopback
 
-Before the gate goes in front of anything, your chosen base server must already be running as a
-Dockge stack under `/opt/stacks/<app>/`, bound to **`127.0.0.1:<HOST_PORT>` only** — see
+The gate asks one thing of the origin: **something answers on `127.0.0.1:<HOST_PORT>`, and nothing
+answers from anywhere else.** How that process got there — a container, a systemd service, a bare
+process — is your base server's business, not the gate's; see
 [`../servers/<your-server>/README.md`](../servers/) (e.g.
-[`nginx-static`](../servers/nginx-static/)) for that half. The rest of this runbook assumes it
-answers on loopback:
+[`nginx-static`](../servers/nginx-static/)) for that half. Bring it up there, then verify the bind
+here — this check belongs to the gate, because that bind is the security floor the gate sits in
+front of:
 
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:<HOST_PORT>/          # 200
@@ -34,7 +36,12 @@ ss -ltnp | grep <HOST_PORT>                                                     
 ```
 
 A `0.0.0.0` bind means the origin is on the LAN with no auth — stop and fix it before going
-further. The loopback bind is the security floor this gate sits in front of.
+further.
+
+Run both from a shell **on the box**. If you later add an automated liveness probe that runs from
+*another container*, it cannot reach a loopback-scoped Docker publish at all: the DNAT match is
+destination-scoped to `127.0.0.1`, so a probe aimed at a bridge gateway such as `172.17.0.1` fails
+against a perfectly healthy origin (`Tooling#283`).
 
 ---
 
@@ -125,14 +132,14 @@ a real browser and confirm an allow-listed login reaches the site.
   rule (full-array replace, §1b) and add its DNS record (§1c); add the hostname to the Access app's
   `destinations`.
 
-(Updating the *content or config of the origin itself* — new site files, an `nginx.conf` change —
-is the base server's concern, not the gate's: see your server's README, e.g.
-[`../servers/nginx-static/README.md`](../servers/nginx-static/README.md).)
+(Updating the *content or config of the origin itself* is the base server's concern, not the
+gate's — including whether a given change needs the origin restarted: see your server's README,
+e.g. [`../servers/nginx-static/README.md`](../servers/nginx-static/README.md).)
 
 ## Removing the gate
 
-Remove the tunnel ingress rule, the DNS record, and the Access app via the API/dashboard. Bringing
-the origin container down is the base server's concern (its README). The gate holds no state — it's
+Remove the tunnel ingress rule, the DNS record, and the Access app via the API/dashboard. Shutting
+the origin itself down is the base server's concern (its README). The gate holds no state — it's
 all Cloudflare-side config plus the loopback bind.
 
 ## See also
