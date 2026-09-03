@@ -96,8 +96,11 @@ Follows personal's **Code style** baseline. This repo's individuality:
 
 ## Key gotchas
 
-- **`.gitattributes` pins LF** (`* text=auto eol=lf`, `.ps1` forced LF) -- so the PowerShell
-  scaffold's line endings don't flip per clone.
+- **`.gitattributes` pins LF** -- `* text=auto eol=lf` covers the repo, and `*.example text eol=lf`
+  pins the scaffolds specifically, so their line endings don't flip per clone even if the wildcard
+  is ever narrowed. Every scaffold ends in `.example` -- `publish-scp.ps1.example` included -- so
+  the `*.ps1` line matches nothing today and is forward cover only; don't credit it for the
+  scaffold.
 - **The scp scaffold's stage-then-swap and trailing-dot source are load-bearing, not decoration** --
   they're the fixes that made the reference `tools-site` publish safe (interrupted-transfer safety;
   avoiding a nested `dist/dist/`). Don't "simplify" them back to a direct `scp` into the live dir.
