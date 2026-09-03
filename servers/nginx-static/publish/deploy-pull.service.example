@@ -31,17 +31,21 @@
 # The 4min default has no basis beyond suiting a small hand-authored one-pager (the reference
 # consumer) -- raise it for a bigger repo or a slow uplink. Git's smart-protocol fetch has no
 # resume: a pull that legitimately needs longer than the cap gets killed, retried next tick, and
-# killed again -- every attempt re-downloads the pack from zero, so it never completes. That is a
-# livelock, not a slow deploy, and a single failed run looks identical in the journal to the
-# one-off hang this setting exists to catch.
+# killed again -- every attempt re-negotiates and re-downloads that fetch's own pack from zero (the
+# delta since the last successful pull, not the whole repo history -- but still non-resumable), so
+# it never completes. That is a livelock, not a slow deploy, and a single failed run looks identical
+# in the journal to the one-off hang this setting exists to catch.
 #
-# Raising it does not need to stay under the paired .timer's OnUnitActiveSec=. Per
-# systemd.timer(5), OnUnitActiveSec= is relative to when the unit it fires was last ACTIVATED --
-# not to each tick, and not to when a run finishes -- so a tick landing mid-run is simply skipped,
-# never queued alongside the one already running. Once that run ends (success, or this timeout's
-# own kill), the schedule is already overdue and catches up on its own within the existing poll
-# cadence; a longer timeout only delays how soon a genuine hang gets caught, it doesn't add a
-# second, separate stall.
+# Raising it does not need to stay under the paired .timer's OnUnitActiveSec= -- as noted above,
+# that re-arms only from the unit's last activation, not per-tick, so a tick landing mid-run is
+# simply skipped rather than queued alongside the one already running. Once that run ends (success,
+# or this timeout's own kill), the schedule is already overdue and the timer's own coalescing
+# (bounded by its AccuracySec=, 1min by default here since it's unset) catches it up -- a longer
+# timeout only delays how soon a genuine hang gets caught, it doesn't add a second, separate stall.
+# That's the documented systemd.timer(5) behavior for OnUnitActiveSec=; an open systemd issue
+# (systemd/systemd#21600) flags some ambiguity specifically for a Type=oneshot unit with no
+# RemainAfterExit= -- exactly this unit's shape -- so treat "catches up" as the expected behavior,
+# not a guarantee verified against this exact unit on a real box.
 #
 # WHAT THE KILL LEAVES BEHIND depends on which phase it lands in. Killing the FETCH is clean --
 # nothing is left over and the next run simply refetches. Killing the CHECKOUT is not: git writes
