@@ -85,6 +85,17 @@ pre-create.
 
 ### Both models, once the stack dir is populated
 
+**Populated is the operative word.** `nginx.conf` and the web-root dir must both exist before this
+first `up`, or Docker creates each missing one as a root-owned directory in its place: a missing
+web root leaves the site serving an empty dir that your first publish then can't write to, and a
+missing `nginx.conf` becomes a directory that stops the container starting at all. In the push
+model the publish run above already created the web root as `<user>`, so don't pre-create it by
+hand as root.
+
+**If you deploy from Dockge rather than a shell, this bites by default.** Its editor writes only
+`compose.yaml` and `.env`, and Deploy runs `docker compose up -d` right away — so `nginx.conf` and
+your content have to reach the stack dir some other way (scp, or the clone) *before* you deploy.
+
 ```bash
 cd /opt/stacks/<app> && sudo docker compose up -d
 # if you kept the /healthz block in nginx.conf:
