@@ -51,6 +51,12 @@ from it rather than editing the `.example` free-hand.
   `172.17.0.1`. Recorded in `gate/README.md` §0 as a caveat for anyone adding an automated probe
   from another container; still the constraint to check first if a future server variant wants a
   co-located liveness check. (`Tooling#283`.)
+- **An Access app's `allowed_idps` defaults to every IdP on the account, and `PUT` is a full
+  replace** -- omitted fields reset to their defaults, and there is no `PATCH` for them. Both read
+  from Cloudflare's OpenAPI schema + docs, 2026-09-02, not from a live account. **Date-sensitive:**
+  Cloudflare made its own IdP the default for Zero Trust orgs created from ~2026-06 and stopped
+  auto-adding one-time PIN, so what a consumer's account actually carries depends on its age --
+  re-check before rewording `gate/README.md` §1a's IdP note.
 
 ---
 
