@@ -63,16 +63,17 @@ from it rather than editing the `.example` free-hand.
 
 ## Known consumers
 
-**Nothing runs this template end-to-end yet.** The two live deployments below are what it was
-*extracted from* -- each still runs its own copy of the code this repo genericized -- plus one
-queued to adopt it. That is why `CLAUDE.md` says only a real consumer standing up a real box and
-gate proves the end-to-end.
+**Nothing runs the shared `gate/` end-to-end yet.** The two live deployments below are what
+`servers/nginx-static/` was *extracted from* -- each still runs its own copy of that code -- and
+a third has adopted the repo-root web-root knob but a **different gate** than the one this repo
+documents (see its row below). That is why `CLAUDE.md` says only a real consumer standing up a
+real box and the *shared* gate proves that piece end-to-end.
 
 | Repo | Base server | Publish | Relationship to this template |
 |---|---|---|---|
 | `Rackbops/Tooling` -> `tools-site` | nginx-static | push (scp) | **Source.** Live on its own copy; the server + gate were extracted from it. |
 | `Rackbops/rackbops` | nginx-static | pull (git timer) | **Source.** Live on its own `deploy/`; migration onto this template is planned, not done. |
-| `Rackbops/rackbops-ui-ux-std-lib` showcase | nginx-static | tbd | **Prospective.** Parked; would need the repo-root web-root knob (sibling `../styles` import). |
+| `Rackbops/rackbops-ui-ux-std-lib` showcase | nginx-static | pull (git timer) | **In progress**, `Rackbops/rackbops-ui-ux-std-lib#2`. Confirms the repo-root web-root knob for real (sibling `../styles` import) -- but its gate is `Tooling/docs/per-app-cloudflare-access-tunnel.md`'s **per-app token-sidecar tunnel** (zero published host port; `cloudflared` sidecar in its own compose project), not this repo's shared loopback-bound-port `gate/`. `Tooling`'s own doc calls that pattern out as the right one for a brand-new app-specific endpoint, so this is a deliberate divergence, not a template gap -- see [Open questions](#open-questions). |
 
 **The repo-root web-root knob ships but nobody runs it** -- `compose.yaml.example` and
 both `nginx.conf.*.example` variants support it (their deny blocks landed in #19), but it is
@@ -89,3 +90,10 @@ README flags it as such.
 - **Where the shared gate lives once a dynamic-server variant exists** -- probe: with two real
   server tiers using the same gate, confirm the single shared `gate/` still serves both cleanly, or
   whether anything gate-side needs a per-server hook. No action until that second tier is real.
+- **Should the per-app token-sidecar pattern become a second `gate/` variant here?**
+  `rackbops-ui-ux-std-lib` (see Known consumers above) used it instead of this repo's shared
+  loopback-bound-port gate, on `Tooling/docs/per-app-cloudflare-access-tunnel.md`'s explicit
+  advice that it's the right shape for a brand-new app-specific endpoint (vs. this repo's gate,
+  which is right for a stable, already-established shared tool). If a second consumer picks the
+  sidecar pattern too, it's a real second gate shape worth extracting here -- same ground-truth
+  rule as the base-server tier: extract from a real consumer, not speculatively.
