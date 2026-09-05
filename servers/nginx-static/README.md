@@ -96,6 +96,15 @@ Never commit on the box: once `main` moves past a commit made here, the timer's 
 timer the same way and is cleared the same way — `git -C /opt/stacks/<app> reset --hard @{u}` on the
 box; the script's failure log names both causes because it can't tell them apart.
 
+**Push access to the tracked branch is shell access on the box, as `<user>`.** Each tick runs
+`deploy-pull.sh` out of the worktree the last pull wrote, so anyone who can land a commit on that
+branch runs arbitrary code as `<user>` at the next tick — this is inherent to the pull model, not a
+flaw in it. Protect the branch accordingly (required reviews, no force-push, restricted push
+access); the read-only deploy key narrows who can *read* the repo but does nothing about who can
+*write* the branch. And if you uncomment the `docker compose up -d` opt-in in `deploy-pull.sh` (and
+add `<user>` to the `docker` group for it), that shell access becomes **root** on the box — docker
+group membership is root-equivalent (`docker run -v /:/host …`).
+
 The three keepalive lines above are a faster-triggering complement to the service's
 `TimeoutStartSec=` (see `deploy-pull.service.example`): `ConnectTimeout` bounds a hung *initial*
 connection attempt, while `ServerAliveInterval`/`ServerAliveCountMax` catch a session that
@@ -103,9 +112,6 @@ connected fine and then went silent mid-pull — OpenSSH's `ServerAliveInterval`
 without them neither ssh nor git nor the timer would notice that kind of hang on their own until
 `TimeoutStartSec=` finally kills it. If you clone through the plain `git@github.com:...` alternative
 instead of a deploy-key alias, add the same three lines to a `Host github.com` block instead.
-
-These three lines are SSH-specific. Cloning over HTTPS instead? The public clone above already
-carries the `http.lowSpeedLimit`/`http.lowSpeedTime` guard as `-c` flags.
 
 ### Push model: mkdir, then scp
 
@@ -165,7 +171,11 @@ app repo, copy `deploy-pull.service.example` to `deploy/<app>-deploy.service` an
 whereas `deploy-pull.sh.example` becomes `deploy/deploy-pull.sh`, keeping its stem (the `.service`'s
 `ExecStart=` names that script path and the `.timer`'s `Unit=` names the service's unit name, so
 keep all three in sync). They arrive with the clone in the pull model, since they live under
-`deploy/` in the repo. Install them with `sudo`:
+`deploy/` in the repo. Add `deploy/*.sh text eol=lf` to your app repo's `.gitattributes` before you
+commit `deploy-pull.sh`: this template's own LF pin can't govern your repo, and a Windows editor that
+saves CRLF makes the box's `/bin/bash .../deploy-pull.sh` die at `set -o pipefail` (`invalid option
+name` on the trailing CR — systemd's unit parser and nginx tolerate a stray CR, bash does not).
+Install them with `sudo`:
 
 ```bash
 # on the box, in /opt/stacks/<app>/deploy/ (already there via the clone -- see "Bring it up" above)
@@ -175,8 +185,11 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now <app>-deploy.timer
 # verify:
 sudo systemctl start <app>-deploy.service                 # force one run
-journalctl -u <app>-deploy.service -n 20 --no-pager       # "up to date", "updated <a> -> <b>",
+sudo journalctl -u <app>-deploy.service -n 20 --no-pager  # "up to date", "updated <a> -> <b>",
                                                             # or (rare) a wedge -- see the .service
+                                                            # (sudo: systemd's own "timeout" line is
+                                                            # _UID=0; an unprivileged <user> not in
+                                                            # adm/systemd-journal can't see it)
 systemctl list-timers <app>-deploy.timer --no-pager       # next scheduled run
 ```
 
@@ -185,9 +198,14 @@ disable --now <app>-deploy.timer`. (Prefer cron? One line polls without the syst
 but it must go in `<user>`'s OWN crontab, run as `<user>` via `crontab -e` (not `sudo crontab -e`,
 which edits root's crontab and hits the same dubious-ownership trap the clone step above avoids, or
 on an older git succeeds as root and leaves root-owned `.git` files that lock `<user>` back out):
-`*/5 * * * * /bin/bash /opt/stacks/<app>/deploy/deploy-pull.sh`. Its output goes to cron's mail,
-not the journal, so the `journalctl` verify line above doesn't apply -- redirect it to a log file
-if you want to see it.)
+`*/5 * * * * flock -n /run/lock/<app>-deploy timeout -k 30s 4m /bin/bash /opt/stacks/<app>/deploy/deploy-pull.sh`.
+The `flock`/`timeout` are not decoration: cron has neither the `.service`'s `TimeoutStartSec=` nor
+its oneshot can't-start-twice property, so without them a pull stalled on a silent connection (Linux
+TCP keepalive defaults to ~2h) lingers while later ticks start behind it and stalled processes pile
+up. `flock -n` skips a tick while one is still running; GNU `timeout -k 30s 4m` kills a stall
+(signalling the process group, so git's children die too) -- together matching what the timer setup
+gets for free. Its output goes to cron's mail, not the journal, so the `journalctl` verify line
+above doesn't apply -- redirect it to a log file if you want to see it.)
 
 ## Web-root knob
 
@@ -246,6 +264,29 @@ Two consequences to know before using it:
   `docker compose up -d`, and a unit-file change with a reminder to re-copy it to
   `/etc/systemd/system/` and run `sudo systemctl daemon-reload` -- see its log, same as the
   `nginx.conf` case above.
+
+## Removing this server
+
+The gate runbook's "Removing the gate" sends you here to shut the origin down. On the box:
+
+```bash
+# stop and remove the stack (containers + network; the read-only mounts are left in place)
+cd /opt/stacks/<app> && sudo docker compose down
+
+# pull model only: remove the timer + service, then reload so systemd forgets them
+sudo systemctl disable --now <app>-deploy.timer
+sudo rm /etc/systemd/system/<app>-deploy.service /etc/systemd/system/<app>-deploy.timer
+sudo systemctl daemon-reload
+
+# pull model + private repo: drop the deploy key and its host alias on the box, as <user>
+rm -f ~/.ssh/<app>_deploy ~/.ssh/<app>_deploy.pub
+# then delete the `Host github-<app>` block from ~/.ssh/config by hand
+```
+
+Then **revoke the deploy key on GitHub** (repo → Settings → Deploy keys) — a live read-only key on a
+retired box otherwise stays valid — and `sudo rm -rf /opt/stacks/<app>` once you no longer need the
+stack dir. Leaving the unit files behind is the trap: a later `systemctl enable` resurrects
+`<app>-deploy.{service,timer}` against a stack that may no longer exist.
 
 ## SPA vs. plain static
 
