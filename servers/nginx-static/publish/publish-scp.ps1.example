@@ -19,7 +19,9 @@
     Content-only, and content needs no restart -- this script never ships nginx.conf. What each
     kind of change does need is in the "Updating" section linked above, not restated here.
     If your build hashes asset filenames (Vite etc.), a fresh index.html always references
-    the assets that shipped alongside it, so there's no stale-asset window.
+    the assets that shipped alongside it -- server-side. A returning visitor's browser can still
+    hold a heuristically-cached old index.html across a publish; the SPA nginx.conf answers that by
+    sending index.html Cache-Control: no-cache.
 
     Publishes via a remote STAGING directory, not a direct scp into the live web-root dir:
 

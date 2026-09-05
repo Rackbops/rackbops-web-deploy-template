@@ -32,6 +32,21 @@ server {
     root  /usr/share/nginx/html;
     index index.html;
 
+    # TLS terminates at the Cloudflare edge; nginx only ever sees plain HTTP on its container port,
+    # so its default ABSOLUTE redirects would hand the browser `http://<host>[:<CONTAINER_PORT>]/...`
+    # -- wrong scheme, and a dead port whenever CONTAINER_PORT isn't 80 (a directory URL without a
+    # trailing slash is the common trigger). Relative redirects keep the scheme and host the browser
+    # arrived on. nginx >= 1.11.8. Inferred -- neither reference consumer carries it, but both would
+    # need it behind the tunnel.
+    absolute_redirect off;
+
+    # OPTIONAL, inferred: compress text on the box->edge tunnel leg. Cloudflare re-compresses
+    # edge->visitor on all plans regardless, so the only leg this helps is origin->edge, once per
+    # edge-cache miss. Neither reference consumer carries it; delete to keep the fragment minimal.
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1k;
+
     # Liveness probe -- exact match, so it never falls through to the `location /` below. Optional but
     # cheap; a co-located uptime monitor or a deploy healthcheck can hit it. (tools-site has this;
     # rackbops does not -- keep it or delete it.)
@@ -52,9 +67,18 @@ server {
     # Exact/prefix match, not directory-wide like the dotfile rule above -- a same-named file
     # elsewhere in the tree (e.g. a docs copy at /some/nginx.conf) is a different, ordinary file
     # and is untouched by these.
-    location = /compose.yaml { return 404; }
-    location = /nginx.conf   { return 404; }
-    location ^~ /deploy/     { return 404; }
+    # compose.yaml has three other names Docker Compose (and Dockge) accept -- deny them all.
+    location = /compose.yaml        { return 404; }
+    location = /compose.yml         { return 404; }
+    location = /docker-compose.yaml { return 404; }
+    location = /docker-compose.yml  { return 404; }
+    location = /nginx.conf          { return 404; }
+    location ^~ /deploy/            { return 404; }
+    # A push-model publish script kept alongside (publish.ps1 / publish-scp.ps1, or any name) carries
+    # <user>@<host>, the most identifier-bearing file in the tree. Deny every root-level .ps1,
+    # case-insensitively; root-anchored, so a .ps1 in a subdir stays an ordinary file, matching the
+    # exact-match reasoning above.
+    location ~* ^/[^/]+\.ps1$ { return 404; }
 
     # === END SHARED. Below is what makes this the plain-static variant. ===
 
