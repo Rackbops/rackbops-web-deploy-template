@@ -15,8 +15,9 @@ Two tunnel styles exist and the DNS/ingress steps differ between them:
 - **Remotely-managed tunnel** (token-installed; ingress config lives in Cloudflare, edited via the
   API) — covered here. No local `config.yml`, no `cloudflared tunnel route dns`.
 - **Locally-managed tunnel** (a local `config.yml` + `cloudflared tunnel route dns`) — a different
-  path with a cross-zone `cert.pem` gotcha; not covered here. If that's your setup, follow that
-  variant's runbook instead.
+  path with a cross-zone `cert.pem` gotcha; not covered here. If that's your setup, see Cloudflare's
+  public local-management docs:
+  <https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/local-management/>
 
 ---
 
@@ -32,12 +33,16 @@ front of:
 
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:<HOST_PORT>/          # 200
-ss -ltnp | grep <HOST_PORT>                                                     # bound 127.0.0.1, NOT 0.0.0.0
+ss -ltnp 'sport = :<HOST_PORT>'                                                 # exact port; expect one line bound 127.0.0.1, NOT 0.0.0.0
+docker port <app> 2>/dev/null                                                   # cross-check (container origins): "80/tcp -> 127.0.0.1:<HOST_PORT>"
 docker version --format '{{.Server.Version}}'                                   # >= 28.0.0 if a Docker container publishes the port
 ```
 
-A `0.0.0.0` bind means the origin is on the LAN with no auth — stop and fix it before going
-further.
+Use `ss`'s exact `sport =` filter, not `grep <HOST_PORT>` — a substring grep also matches `:8080`,
+`:18080`, or a `pid=<HOST_PORT>` on an unrelated socket, so on a busy box the one line that matters
+is buried or a foreign match triggers a false alarm. **Empty output is not a pass** — it means the
+origin isn't up or you have the wrong port. A `0.0.0.0` bind means the origin is on the LAN with no
+auth — stop and fix it before going further.
 
 **A loopback publish is the security floor only on Docker Engine >= 28.0.0.** If a Docker container
 publishes the port (as `nginx-static` does), a clean `ss` showing `127.0.0.1` is not the whole story
@@ -122,9 +127,11 @@ work that way.
 
 **One app can cover multiple hostnames, including across two DNS zones** — a `destinations[]`
 entry of `type: "public"` is just `{ type, uri }`, a bare hostname with no zone field; Access apps
-are account-scoped, not zone-scoped. Before relying on a multi-domain app, **verify the
-`destinations` shape against a real existing app** (read one back via the API) rather than trusting
-the schema alone. The proven fallback is two single-hostname apps sharing the same policies.
+are account-scoped, not zone-scoped. `Tooling#282` proved exactly this — one two-zone app, created
+first and read back clean on the first attempt, so the two-single-hostname-app split was never
+needed. Still **read the `destinations` shape back via the API** to confirm your own; the
+alternative, if you ever hit a case the single app can't cover, is two single-hostname apps sharing
+the same policies.
 
 ### 1b. Tunnel ingress (remotely-managed)
 
@@ -152,7 +159,12 @@ array**, so include every existing rule plus your new one(s), catch-all last:
 ```
 
 Each hostname rule carries its **own** `originRequest.access` block. A copy at the config's top
-level validates but is **silently ignored** by cloudflared — a per-rule block is mandatory.
+level validates but is **silently ignored** by cloudflared — a per-rule block is mandatory. The
+closed-door probe in §2 can't confirm it: that 302 comes from the edge Access policy on the
+hostname, not from the origin-side JWT check this block turns on, so a config missing the block (or
+with it only at top level) still returns 302 with every verify step green. Read the config back and
+confirm each rule carries it: `GET /accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations`,
+and check the hostname rule's `originRequest.access.required` is `true` with your app's AUD.
 
 ### 1c. DNS
 
@@ -164,8 +176,10 @@ Create a **proxied** CNAME per hostname (one per zone), pointing at the tunnel:
   "content": "<tunnel-id>.cfargotunnel.com", "proxied": true, "ttl": 1 }
 ```
 
-Use the API even for a remotely-managed tunnel (the `cloudflared tunnel route dns` CLI is only for
-the locally-managed style, and has a cross-zone `cert.pem` trap).
+Use the API even for a remotely-managed tunnel: `cloudflared tunnel route dns` needs a `cert.pem`
+from `cloudflared tunnel login` (a token-installed box has none) and carries a cross-zone `cert.pem`
+trap, so the API is the reliable path either way. (The CLI works regardless of how the tunnel is
+managed — the blocker is the missing `cert.pem`, not the management style.)
 
 ---
 
@@ -177,7 +191,7 @@ From an unauthenticated session (no Access cookie), every hostname must redirect
 curl -s -o /dev/null -w "%{http_code}\n" https://<your-hostname>/    # 302
 ```
 
-A `302` (Location → `<team>.cloudflareaccess.com/cdn-cgi/access/login/<hostname>?...`) is the door
+A `302` (Location → `<team>.cloudflareaccess.com/cdn-cgi/access/login/<your-hostname>?...`) is the door
 shut. **A `200` unauthenticated is a failed rollout — stop and fix.** Inspect the `Location`
 header and confirm the login URL names *your* hostname and the `kid` matches *your* app's AUD, so
 you know it's gating the right app, not just returning some generic redirect. Then open the URL in
@@ -191,8 +205,7 @@ a real browser and confirm an allow-listed login reaches the site.
   repo.
 - **Adding another hostname to an existing app** — re-PUT the tunnel config with the new ingress
   rule (full-array replace, §1b) and add its DNS record (§1c); add the hostname to the Access app's
-  `destinations` (also a full replace — `GET` the app and re-send its whole body with the extra
-  destination, or you reset `allowed_idps` and every other omitted field to its default, §1a).
+  `destinations` (also a full replace, §1a).
 
 (Updating the *content or config of the origin itself* is the base server's concern, not the
 gate's — including whether a given change needs the origin restarted: see your server's README,
