@@ -91,7 +91,10 @@ git clone git@github-<app>:<OWNER>/<REPO>.git /opt/stacks/<app>
 ```
 
 Never commit on the box: once `main` moves past a commit made here, the timer's `git pull
---ff-only` refuses (loudly, in the journal) rather than merging — the box is a pure consumer.
+--ff-only` refuses (loudly, in the journal) rather than merging — the box is a pure consumer. A
+**force-push that rewrites the tracked branch upstream** (e.g. to purge a leaked value) wedges the
+timer the same way and is cleared the same way — `git -C /opt/stacks/<app> reset --hard @{u}` on the
+box; the script's failure log names both causes because it can't tell them apart.
 
 The three keepalive lines above are a faster-triggering complement to the service's
 `TimeoutStartSec=` (see `deploy-pull.service.example`): `ConnectTimeout` bounds a hung *initial*
