@@ -36,30 +36,38 @@ services:
       #     both are fine.)
       - "127.0.0.1:<HOST_PORT>:<CONTAINER_PORT>"
     volumes:
-      # BOTH sources below must exist on the box BEFORE the first `up` -- except with the
-      # repo-root web-root knob, where the web root IS the stack dir and only nginx.conf applies.
-      # Docker's short mount syntax silently creates a missing source as a ROOT-OWNED DIRECTORY,
-      # and neither failure announces itself as one:
-      #   * web root missing -> the container starts and runs normally, serving an empty
-      #     root-owned dir (a bare `/` then 403s). The first publish-scp.ps1 run dies in the swap
-      #     with `Permission denied` -- it runs as <user>, the dir is root:root 755. Re-running
-      #     never fixes it: remove or chown that dir first, then publish again.
-      #   * nginx.conf missing -> a DIRECTORY of that name, and the container fails to START:
-      #     "not a directory: Are you trying to mount a directory onto a file (or vice-versa)?"
-      #     -- nginx never runs, so there is no nginx error to read.
-      # Both dirs are created even when the start fails, so delete them before retrying.
-      # The server README's order avoids all of this. Dockge does not: its editor writes only
-      # compose.yaml and .env, and Deploy runs `docker compose up -d` straight away -- so put
-      # nginx.conf and your content on the box by other means BEFORE you deploy the stack.
+      # BOTH sources below must exist on the box BEFORE the first `up` (except with the repo-root
+      # web-root knob, where the web root IS the stack dir, so only nginx.conf applies). The long
+      # mount syntax with `create_host_path: false` makes Docker REFUSE at container-create, naming
+      # the missing path ("bind source path does not exist: .../nginx.conf"), instead of the SHORT
+      # `src:dst:ro` syntax's default of silently creating it as a ROOT-OWNED dir -- which serves an
+      # empty web root that 403s, or leaves a directory where nginx.conf should be a file, both
+      # needing manual cleanup. So a Dockge Deploy (it runs `docker compose up -d` straight from its
+      # editor, which writes only compose.yaml/.env) fails loudly until nginx.conf and your content
+      # are on the box, rather than serving an empty root-owned dir. Long syntax is inferred --
+      # neither reference consumer carries it yet; on a correctly-populated box the behaviour is
+      # identical to the short form. The guard itself needs a compose that recognises
+      # `create_host_path` (compose v2.20+, i.e. any modern Docker); an older compose silently
+      # ignores the key and reverts to auto-create -- another reason to stay on a current engine.
       #
-      # WEB-ROOT KNOB -- the left side is which local directory becomes nginx's web root. It is
-      # NOT always a subdir called `dist`/`site`:
-      #   * a build artifact:      ./dist:/usr/share/nginx/html:ro   (e.g. a Vite/React build)
-      #   * a hand-authored dir:   ./site:/usr/share/nginx/html:ro   (e.g. rackbops' one-pager)
-      #   * the REPO ROOT itself:  .:/usr/share/nginx/html:ro        (pull model only -- read the
-      #                            server README's "#web-root-knob" section first, linked above)
-      - <WEB_ROOT_DIR>:/usr/share/nginx/html:ro
+      # WEB-ROOT KNOB -- `source:` is which local directory becomes nginx's web root. It is NOT
+      # always a subdir called `dist`/`site`:
+      #   * a build artifact:      ./dist   (e.g. a Vite/React build)
+      #   * a hand-authored dir:   ./site   (e.g. rackbops' one-pager)
+      #   * the REPO ROOT itself:  .        (pull model only -- read the server README's
+      #                            "#web-root-knob" section first, linked above)
+      - type: bind
+        source: <WEB_ROOT_DIR>
+        target: /usr/share/nginx/html
+        read_only: true
+        bind:
+          create_host_path: false
       # Copy ONE of nginx.conf.spa.example / nginx.conf.static.example to nginx.conf -- see the
       # server README's "SPA vs. plain static". The scp push never re-ships this file; the
       # git-pull model ships whatever you commit.
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - type: bind
+        source: ./nginx.conf
+        target: /etc/nginx/conf.d/default.conf
+        read_only: true
+        bind:
+          create_host_path: false
