@@ -216,23 +216,23 @@ Two consequences to know before using it:
 
 - It serves EVERYTHING in the clone unless `nginx.conf` denies it — `.git/`, `compose.yaml`,
   `nginx.conf`, `deploy/*.service`, all of it. Both `nginx.conf.*.example` variants deny these by
-  default (dotfiles, `compose.yaml`, `nginx.conf`, `deploy/`) — don't remove those blocks if you
-  use this mount.
+  default (dotfiles; `compose.yaml` and its `compose.yml`/`docker-compose.y{,a}ml` aliases;
+  `nginx.conf`; `deploy/`; any root-level `.ps1`) — don't remove those blocks if you use this mount.
 - `/` needs something to actually resolve to: `try_files` finds nothing for a bare `/` unless a
   root `index.html` exists (a `site/index.html` is not `/index.html`). Either add a root
   `index.html` (e.g. one that redirects into your real entry point), or add
   `location = / { return 302 /site/; }` (adjust the path) — otherwise a gated visitor hits nginx's
-  bare 403 at `/` with no indication where the real site lives. If you copied
-  `nginx.conf.spa.example`, a missing root `index.html` is worse than a 403 at `/` alone: ANY
-  unmatched path also 500s (nginx's `try_files ... /index.html` fallback tries to internally
-  redirect to the still-missing `/index.html` and loops until nginx aborts the request) — one more
-  reason to add the root `index.html`/redirect above rather than leave it unresolved.
+  bare 403 at `/` with no indication where the real site lives. (The SPA variant's `=404` fallback
+  means paths below `/` now 404 honestly instead of 500-looping on a missing root `index.html`, so
+  this bare-`/` 403 is the only place the omission still shows.)
 
 ## Updating
 
 - **Content** — via your chosen publish mechanism above. Served live off the read-only mount;
   **no restart needed** (nginx re-reads files per request; hashed asset filenames mean a fresh
-  `index.html` always references the assets that shipped with it).
+  `index.html` always references the assets that shipped with it — *server-side*. A returning
+  visitor's browser can still hold a heuristically-cached old `index.html` across a publish, which
+  is why `nginx.conf.spa.example` sends `index.html` a `Cache-Control: no-cache`).
 - **`nginx.conf`** — always needs `docker compose restart <app>` to take effect; this is the ONE
   change that needs a restart. How it reaches the box differs by model: the scp push never
   re-ships it (re-copy it to the stack dir by hand, then restart); the git-pull model ships
@@ -253,7 +253,7 @@ Two complete files, differing only in how an unknown path is answered. **Copy on
 `nginx.conf`** — the choice is the act of copying, so there is nothing to uncomment and no way to
 end up with the wrong one by leaving the file untouched:
 
-- [`nginx.conf.spa.example`](nginx.conf.spa.example) — `try_files $uri $uri/ /index.html;` for a
+- [`nginx.conf.spa.example`](nginx.conf.spa.example) — `try_files $uri $uri/ /index.html =404;` for a
   client-routed build (React/Vite, like `tools-site`) so deep links resolve to the app. Unknown
   paths answer **200 with `index.html`**, which is right for an app and wrong for a content site.
 - [`nginx.conf.static.example`](nginx.conf.static.example) — `try_files $uri $uri/ =404;` plus an
@@ -261,5 +261,7 @@ end up with the wrong one by leaving the file untouched:
   paths **404 honestly**, and link checkers, uptime monitors and search engines see the truth.
 
 Inside `server { }` the two carry identical directives down to `location /` — the port, the root,
-`/healthz`, and the deny rules that matter for the repo-root mount. Only the headers and the
-`location /` body differ. If you fix something in that shared part, fix it in both files.
+`/healthz`, and the deny rules that matter for the repo-root mount. Below that they diverge: the SPA
+adds an immutable-cache `location ^~ /assets/` and an `index.html` `no-cache`, the static adds an
+optional `error_page 404`, and the `location /` body itself differs. If you fix something in that
+shared part, fix it in both files.

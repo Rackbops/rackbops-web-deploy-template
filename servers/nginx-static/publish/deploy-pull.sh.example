@@ -136,7 +136,7 @@ main() {
   while IFS= read -r f; do
     [[ -z "$f" ]] && continue
     case "$f" in
-      compose.yaml)
+      compose.yaml|compose.yml|docker-compose.yaml|docker-compose.yml)
         needs_up=1
         content_only=0
         ;;
@@ -155,7 +155,7 @@ main() {
     esac
   done <<< "$changed_files"
 
-  (( needs_up )) && echo "<app>: compose.yaml changed -- run 'docker compose up -d' in $REPO_DIR to apply it."
+  (( needs_up )) && echo "<app>: a compose file changed -- run 'docker compose up -d' in $REPO_DIR to apply it."
   # NOT `nginx -s reload`: a pull's `git checkout` replaces nginx.conf via a new inode (unlink +
   # create), and Docker's single-file bind mount keeps watching the OLD inode -- a reload after a
   # pull silently keeps serving the stale config. Only a restart re-resolves the host path.

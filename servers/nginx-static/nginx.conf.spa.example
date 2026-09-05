@@ -32,6 +32,21 @@ server {
     root  /usr/share/nginx/html;
     index index.html;
 
+    # TLS terminates at the Cloudflare edge; nginx only ever sees plain HTTP on its container port,
+    # so its default ABSOLUTE redirects would hand the browser `http://<host>[:<CONTAINER_PORT>]/...`
+    # -- wrong scheme, and a dead port whenever CONTAINER_PORT isn't 80 (a directory URL without a
+    # trailing slash is the common trigger). Relative redirects keep the scheme and host the browser
+    # arrived on. nginx >= 1.11.8. Inferred -- neither reference consumer carries it, but both would
+    # need it behind the tunnel.
+    absolute_redirect off;
+
+    # OPTIONAL, inferred: compress text on the box->edge tunnel leg. Cloudflare re-compresses
+    # edge->visitor on all plans regardless, so the only leg this helps is origin->edge, once per
+    # edge-cache miss. Neither reference consumer carries it; delete to keep the fragment minimal.
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1k;
+
     # Liveness probe -- exact match, so it never falls through to the `location /` below. Optional but
     # cheap; a co-located uptime monitor or a deploy healthcheck can hit it. (tools-site has this;
     # rackbops does not -- keep it or delete it.)
@@ -52,18 +67,45 @@ server {
     # Exact/prefix match, not directory-wide like the dotfile rule above -- a same-named file
     # elsewhere in the tree (e.g. a docs copy at /some/nginx.conf) is a different, ordinary file
     # and is untouched by these.
-    location = /compose.yaml { return 404; }
-    location = /nginx.conf   { return 404; }
-    location ^~ /deploy/     { return 404; }
+    # compose.yaml has three other names Docker Compose (and Dockge) accept -- deny them all.
+    location = /compose.yaml        { return 404; }
+    location = /compose.yml         { return 404; }
+    location = /docker-compose.yaml { return 404; }
+    location = /docker-compose.yml  { return 404; }
+    location = /nginx.conf          { return 404; }
+    location ^~ /deploy/            { return 404; }
+    # A push-model publish script kept alongside (publish.ps1 / publish-scp.ps1, or any name) carries
+    # <user>@<host>, the most identifier-bearing file in the tree. Deny every root-level .ps1,
+    # case-insensitively; root-anchored, so a .ps1 in a subdir stays an ordinary file, matching the
+    # exact-match reasoning above.
+    location ~* ^/[^/]+\.ps1$ { return 404; }
 
     # === END SHARED. Below is what makes this the SPA variant. ===
+
+    # Hashed build assets (Vite/webpack emit content-hashed filenames) never change under a given
+    # name, so cache them hard and forever; the =404 answers a chunk a publish has removed with an
+    # honest 404 instead of letting the HTML fallback below reply 200 text/html to a .js request.
+    # OPTIONAL/inferred -- neither reference consumer carries it. Point it at your build's asset dir,
+    # or delete the block if your filenames aren't content-hashed.
+    location ^~ /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        try_files $uri =404;
+    }
 
     # Every unknown path falls back to index.html so the client router can take over -- which
     # means this server answers 200 for paths that do not exist. That is correct for an app and
     # wrong for a content site: use nginx.conf.static.example there.
-    # NOTE: with a repo-root web root and NO root index.html, this fallback loops until nginx
-    # aborts the request with a 500 -- see the README's "#web-root-knob" section.
+    #   * The =404 last arg is what stops the old failure: a repo-root mount with NO root index.html
+    #     used to loop the fallback until nginx aborted with a 500 ("rewrite or internal redirection
+    #     cycle"); now such a path 404s honestly. A found non-last arg is served in place without
+    #     re-entering location matching, so a header meant for index.html must sit in THIS block, not
+    #     a `location = /index.html` (which the fallback would bypass).
+    #   * Cache-Control no-cache makes the browser revalidate what this block serves -- index.html and
+    #     its fallbacks (and any other root-level file, harmlessly) -- rather than run a heuristically-
+    #     cached old copy against the new hashed assets after a publish (which would 404 a
+    #     since-removed chunk). Inferred; see the README's "#updating" section.
     location / {
-        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache";
+        try_files $uri $uri/ /index.html =404;
     }
 }
