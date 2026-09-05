@@ -33,12 +33,25 @@ front of:
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:<HOST_PORT>/          # 200
 ss -ltnp | grep <HOST_PORT>                                                     # bound 127.0.0.1, NOT 0.0.0.0
+docker version --format '{{.Server.Version}}'                                   # >= 28.0.0 if a Docker container publishes the port
 ```
 
 A `0.0.0.0` bind means the origin is on the LAN with no auth — stop and fix it before going
 further.
 
-Run both from a shell **on the box**. If you later add an automated liveness probe that runs from
+**A loopback publish is the security floor only on Docker Engine >= 28.0.0.** If a Docker container
+publishes the port (as `nginx-static` does), a clean `ss` showing `127.0.0.1` is not the whole story
+on an older engine: Docker's docs state that "[i]n releases older than 28.0.0, hosts within the same
+L2 segment (for example, hosts connected to the same network switch) can reach ports published to
+localhost" — the nat DNAT rule rewrites the destination before the kernel's martian check, so a LAN
+neighbour that routes `127.0.0.1` via the box reaches the container behind the gate. Engine 28.0.0
+fixed it ("Fix a security issue that was allowing neighbor hosts to connect to ports mapped on a
+loopback address", moby/moby#49325; the long-standing report is moby/moby#45610). There is no 27.x
+backport, and distro-packaged engines often lag well behind — check `docker version` (Server
+component) rather than assuming. This is Docker-specific; an origin that is a bare systemd process
+binding `127.0.0.1` is not affected.
+
+Run these from a shell **on the box**. If you later add an automated liveness probe that runs from
 *another container*, it cannot reach a loopback-scoped Docker publish at all: the DNAT match is
 destination-scoped to `127.0.0.1`, so a probe aimed at a bridge gateway such as `172.17.0.1` fails
 against a perfectly healthy origin (`Tooling#283`).

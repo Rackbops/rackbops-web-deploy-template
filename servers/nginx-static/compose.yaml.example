@@ -11,6 +11,10 @@
 # The 127.0.0.1 bind is the security floor: nginx is reachable only over loopback, and the
 # Cloudflare Tunnel + Access gate sit in front of it (the gate runbook above). If this ever binds
 # 0.0.0.0 the site is exposed on the LAN with no auth -- don't.
+#   CAVEAT: "reachable only over loopback" holds on Docker Engine >= 28.0.0. On older engines a host
+#   on the same L2 segment (same switch) can reach a 127.0.0.1-published port even though `ss` shows
+#   127.0.0.1 -- Docker fixed this in 28.0.0 (moby/moby#49325). Check `docker version` (Server); many
+#   distro-packaged engines still lag. See the gate runbook's step 0 for the full note.
 
 services:
   <app>:

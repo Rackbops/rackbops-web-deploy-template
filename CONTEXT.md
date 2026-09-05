@@ -52,6 +52,14 @@ from it rather than editing the `.example` free-hand.
   `172.17.0.1`. Recorded in `gate/README.md` §0 as a caveat for anyone adding an automated probe
   from another container; still the constraint to check first if a future server variant wants a
   co-located liveness check. (`Tooling#283`.)
+- **A `127.0.0.1`-published Docker port is the security floor only on Docker Engine >= 28.0.0** --
+  the sibling caveat to the DNAT one above, opposite direction. On older engines a host on the same
+  L2 segment can reach a loopback-published port even though `ss` shows `127.0.0.1`, because the nat
+  DNAT rule rewrites the destination before the martian check; Docker fixed it in 28.0.0
+  (`moby/moby#49325`, report `#45610`). Docker-specific -- a bare systemd process binding `127.0.0.1`
+  is unaffected. Recorded in `gate/README.md` §0 next to the DNAT note; the real test is
+  `docker version` (Server >= 28.0), since distro-packaged engines lag. (Docker port-publishing docs
+  + Engine 28.0.0 release notes, 2026-09-05.)
 - **An Access app's `allowed_idps` defaults to every IdP on the account, and `PUT` is a full
   replace** -- omitted fields reset to their defaults, and there is no `PATCH` for them. Both read
   from Cloudflare's OpenAPI schema + docs, 2026-09-02, not from a live account. **Date-sensitive:**
