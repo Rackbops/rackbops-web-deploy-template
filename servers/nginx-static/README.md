@@ -33,28 +33,27 @@ the box only ever gets what's on the branch it clones. Then:
 # on the box, logged in as <user> -- the account the service's User= line names
 sudo mkdir -p /opt/stacks/<app>
 sudo chown <user>:<user> /opt/stacks/<app>
-git clone <REPO_URL> /opt/stacks/<app>       # as <user>, into the still-EMPTY dir
+# public repo over HTTPS, into the still-EMPTY dir, AS <user> -- the -c flags arm git's low-speed
+# abort for this clone and persist into its config so every later pull inherits them (see below)
+git clone -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=30 <REPO_URL> /opt/stacks/<app>
 # (private repo? do the deploy-key setup below FIRST, then clone through its alias instead)
 ```
 
 The clone above defaults to HTTP(S) for a public repo, and gets none of the keepalive guard in the
 private-repo block below — `ConnectTimeout`/`ServerAliveInterval`/`ServerAliveCountMax` are
 `ssh_config` options and do nothing for an HTTPS transport. Git's HTTP client has its own
-equivalent, unset (so disabled) by default — set it once, on the box, right after cloning:
+equivalent, unset (so disabled) by default — which is what the `-c http.lowSpeedLimit`/
+`http.lowSpeedTime` flags on the clone turn on. `git clone -c` applies each key before the fetch
+begins, so the guard covers the clone itself — including the server's silent
+ref-negotiation/pack-building phase before any bytes arrive — and both keys land in the new repo's
+config, so every later `git pull` inherits them with no follow-up `git config` needed. (Already
+cloned without them? Add them after the fact with `git -C /opt/stacks/<app> config
+http.lowSpeedLimit 1000` and `... http.lowSpeedTime 30` — but that only guards later pulls, not the
+clone that already ran.)
 
-```bash
-git -C /opt/stacks/<app> config http.lowSpeedLimit 1000    # bytes/sec
-git -C /opt/stacks/<app> config http.lowSpeedTime 30       # seconds -- abort under ~1 KB/s for 30s
-```
-
-These apply across the whole request, including the server's silent ref-negotiation/pack-building
-phase before any bytes arrive — raise both for a bigger repo or a busier git host, the same reason
-`TimeoutStartSec=` needs raising (see `deploy-pull.service.example`); too tight and this guard trips
-on a legitimately slow-but-healthy pull instead of only a genuine stall.
-
-This guard only protects pulls AFTER this initial clone — unlike the SSH keepalives further down
-(set up in `~/.ssh/config` before cloning), `git config` needs the repo to already exist, so a hang
-during the clone itself is caught only by the service's `TimeoutStartSec=`.
+Raise both for a bigger repo or a busier git host, the same reason `TimeoutStartSec=` needs raising
+(see `deploy-pull.service.example`); too tight and this guard trips on a legitimately
+slow-but-healthy clone or pull instead of only a genuine stall.
 
 `compose.yaml`, `nginx.conf`, and `deploy/` all arrive with the clone — there's nothing to copy in
 separately, and nothing may be copied in *before* it: `git clone` refuses a non-empty destination
@@ -102,8 +101,8 @@ without them neither ssh nor git nor the timer would notice that kind of hang on
 `TimeoutStartSec=` finally kills it. If you clone through the plain `git@github.com:...` alternative
 instead of a deploy-key alias, add the same three lines to a `Host github.com` block instead.
 
-These three lines are SSH-specific. Cloning over HTTPS instead? Use the `http.lowSpeedLimit`/
-`http.lowSpeedTime` guard above the clone command.
+These three lines are SSH-specific. Cloning over HTTPS instead? The public clone above already
+carries the `http.lowSpeedLimit`/`http.lowSpeedTime` guard as `-c` flags.
 
 ### Push model: mkdir, then scp
 
