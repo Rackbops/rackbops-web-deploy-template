@@ -47,7 +47,7 @@ from it rather than editing the `.example` free-hand.
   read-only deploy key makes pull work for a private repo, which is exactly what `rackbops` does.
   What selects push is a box that can't or shouldn't hold a clone at all. (`Tooling#281`,
   `Rackbops/rackbops`.)
-- **A `-p 127.0.0.1:<port>:<port>` publish is NOT reachable via a Docker bridge gateway** -- the
+- **A `-p 127.0.0.1:<HOST_PORT>:<CONTAINER_PORT>` publish is NOT reachable via a Docker bridge gateway** -- the
   DNAT is destination-scoped to `127.0.0.1`, so a co-located same-host check must hit loopback, not
   `172.17.0.1`. Recorded in `gate/README.md` §0 as a caveat for anyone adding an automated probe
   from another container; still the constraint to check first if a future server variant wants a
@@ -81,13 +81,14 @@ real box and the *shared* gate proves that piece end-to-end.
 |---|---|---|---|
 | `Rackbops/Tooling` -> `tools-site` | nginx-static | push (scp) | **Source.** Live on its own copy; the server + gate were extracted from it. |
 | `Rackbops/rackbops` | nginx-static | pull (git timer) | **Source.** Live on its own `deploy/`; migration onto this template is planned, not done. |
-| `Rackbops/rackbops-ui-ux-std-lib` showcase | nginx-static | pull (git timer) | **In progress**, `Rackbops/rackbops-ui-ux-std-lib#2`. Confirms the repo-root web-root knob for real (sibling `../styles` import) -- but its gate is `Tooling/docs/per-app-cloudflare-access-tunnel.md`'s **per-app token-sidecar tunnel** (zero published host port; `cloudflared` sidecar in its own compose project), not this repo's shared loopback-bound-port `gate/`. `Tooling`'s own doc calls that pattern out as the right one for a brand-new app-specific endpoint, so this is a deliberate divergence, not a template gap -- see [Open questions](#open-questions). |
+| `Rackbops/rackbops-ui-ux-std-lib` showcase | nginx-static | pull (git timer) | **Live** (`Rackbops/rackbops-ui-ux-std-lib#2`, shipped). Confirms the repo-root web-root knob for real (sibling `../styles` import) -- but its gate is `Tooling/docs/per-app-cloudflare-access-tunnel.md`'s **per-app token-sidecar tunnel** (zero published host port; `cloudflared` sidecar in its own compose project), not this repo's shared loopback-bound-port `gate/`. `Tooling`'s own doc calls that pattern out as the right one for a brand-new app-specific endpoint, so this is a deliberate divergence, not a template gap -- see [Open questions](#open-questions). |
 
-**The repo-root web-root knob ships but nobody runs it** -- `compose.yaml.example` and
-both `nginx.conf.*.example` variants support it (their deny blocks landed in #19), but it is
-inferred from
-the sibling-import problem rather than extracted from a running deployment, which is why the server
-README flags it as such.
+**The repo-root web-root knob is now run for real** -- by the `rackbops-ui-ux-std-lib` showcase
+above (the sibling `../styles` import), so it is no longer inferred-only: the knob itself and both
+`nginx.conf.*.example` deny blocks that make it safe (landed in #19) are confirmed by a running
+deployment. That consumer's gate differs from this repo's shared `gate/`, so it does NOT prove the
+*shared* gate end-to-end -- that caveat (top of this section) still stands; only the web-root knob
+is what it confirms.
 
 ## Open questions
 

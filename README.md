@@ -28,7 +28,7 @@ the two runbooks (the gate, plus your chosen server).
   container image, its config, and how new content/code reaches it. Today only
   **[`servers/nginx-static/`](servers/nginx-static/)** exists.
 
-The split point is clean: **everything from "the app binds `127.0.0.1:<port>`" outward is the
+The split point is clean: **everything from "the app binds `127.0.0.1:<HOST_PORT>`" outward is the
 shared gate; only how that port is served is per-server.**
 
 ## Using it
@@ -51,10 +51,8 @@ pre-scaffolded with empty flavors.
 
 ## Known consumers
 
-Two real deployments were the source for what's here — one per publish model, which is why the
-push/pull fork exists at all. Both are private repos, and both still run their own copy: **nothing
-runs this template end-to-end yet.** The ledger, with what each one proved, is in
-[`CONTEXT.md`](CONTEXT.md#known-consumers).
+The deployments this template was extracted from, and what each one has proven, are recorded in
+[`CONTEXT.md`](CONTEXT.md#known-consumers) — the single ledger, not restated here.
 
 ## Not in this repo (and where it lives instead)
 
