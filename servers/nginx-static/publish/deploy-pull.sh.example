@@ -162,8 +162,9 @@ main() {
   if (( needs_restart )); then echo "<app>: nginx.conf changed -- run 'docker compose restart <app>' in $REPO_DIR to apply it (a reload will NOT pick this up after a pull -- see https://github.com/Rackbops/rackbops-web-deploy-template/blob/main/servers/nginx-static/README.md#updating)."; fi
   if (( needs_reload_units )); then echo "<app>: a deploy/*.service or *.timer unit changed -- re-copy it to /etc/systemd/system/ and run 'sudo systemctl daemon-reload' to apply it."; fi
   if (( content_only )); then echo "<app>: site content updated; no restart needed (nginx serves the mounted files)."; fi
-  # To apply compose changes automatically too, uncomment the next line
-  # (requires the timer's user to be in the 'docker' group):
+  # To apply compose changes automatically too, uncomment the next line -- BUT it requires the
+  # timer's user to be in the 'docker' group, which is root-equivalent, so it makes anyone who can
+  # push to the tracked branch root on the box (see the README's pull-model trust note):
   # if (( needs_up )); then docker compose up -d; fi
   # An `if` is the last command above, so main() exits 0 on a healthy run with no explicit `return`
   # -- unlike `(( flag )) && echo`, whose exit status is 1 whenever the flag is false.
