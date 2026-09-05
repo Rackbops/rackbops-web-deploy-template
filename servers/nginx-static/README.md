@@ -227,9 +227,9 @@ Pick the mount that puts every asset the page references under the web root.
 holds one. It's a marker check, not a full guard — a stack dir without a `compose.yaml` yet (or one
 named `compose.yml`) isn't caught; the script's own header lists the exact edges. Only a pull-model
 box's clone doubles as both the stack dir and the web root.
-**It's also currently inferred, not extracted from a running deployment** — no consumer in
-[`CONTEXT.md`](../../CONTEXT.md)'s "Known consumers" table runs it yet, per this repo's
-ground-truth rule.
+**Its ground-truth status is in [`CONTEXT.md`](../../CONTEXT.md)'s "Known consumers" table** — a
+consumer now runs this knob for real, behind a *different* gate than this repo's shared one. That
+ledger is the single source for the status, so it isn't tracked in full here.
 Two consequences to know before using it:
 
 - It serves EVERYTHING in the clone unless `nginx.conf` denies it — `.git/`, `compose.yaml`,

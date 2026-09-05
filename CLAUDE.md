@@ -16,28 +16,21 @@ My personal `~/.claude/CLAUDE.md` governs *how I work* -- the review gate, escal
 shipping, commit mechanics, search-tool routing, and shell choice. It is **not restated here**;
 this file covers only what's specific to this repo.
 
-**Commit convention:** Conventional Commits `type(scope): subject` -- `feat`/`docs`/`chore`, scopes
-like the file or layer touched (`gate`, `nginx-static`, `compose`, `publish`). Match the log once it
-exists.
+**Commit convention:** Conventional Commits `type(scope): subject` -- e.g.
+`feat`/`fix`/`docs`/`chore`/`ci` (all in the log), scopes like the file or layer touched (`gate`,
+`nginx-static`, `compose`, `publish`). Match the log.
 
 ## Ground truth: this repo is DERIVED, cite the sources it was extracted from
 
 The `.example` files and runbooks are not authored from first principles -- each is genericized
 from a **real, running** implementation, and that provenance is the ground truth. When changing
-one, check it against its source rather than inventing behavior:
+one, check it against its source rather than inventing behavior. The source of each scaffold, and
+what has been proven about it, is the ledger's job, not this file's: it lives in
+[`CONTEXT.md`](CONTEXT.md)'s "Sources" and "Confirmed facts" sections -- read (and update) it there,
+so a provenance correction lands in one place.
 
-- `servers/nginx-static/` (`compose.yaml.example`, `nginx.conf.spa.example` +
-  `nginx.conf.static.example`,
-  `publish/publish-scp.ps1.example`) -- extracted from `Rackbops/Tooling`'s `tools-site/` (the `#281`
-  deploy artifact; the scp script's stage-then-swap design and its `$LASTEXITCODE`/empty-build
-  guards were proven and adversarially reviewed there).
-- `servers/nginx-static/publish/deploy-pull.sh.example` + `.service`/`.timer` -- extracted from
-  `Rackbops/rackbops`'s `deploy/` (its live git-pull-on-a-systemd-timer auto-deploy).
-- `gate/README.md` -- generalized from the Cloudflare Tunnel + Access rollouts in `Rackbops/Tooling`'s
-  `docs/*-remote-access.md` (private), proven identical across origins in `Tooling#282`.
-
-Mark any claim you can't trace to one of those **inferred** or **unknown**, per personal's Claims
-discipline. A false factual claim in a runbook (`gate/README.md`, a server README, the root
+Mark any claim you can't trace to a `CONTEXT.md` source **inferred** or **unknown**, per personal's
+Claims discipline. A false factual claim in a runbook (`gate/README.md`, a server README, the root
 `README.md`) is a MAJOR finding, not "docs polish."
 
 ## Public repo: no real infrastructure identifiers, ever
