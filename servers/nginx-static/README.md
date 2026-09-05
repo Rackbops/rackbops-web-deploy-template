@@ -13,7 +13,7 @@ same shared [`gate/`](../../gate/).
 | [`compose.yaml.example`](compose.yaml.example) | The Dockge stack: `nginx:alpine`, loopback bind, the web-root + port knobs. |
 | [`nginx.conf.spa.example`](nginx.conf.spa.example) | The `server {}` fragment for a **client-routed build**: unknown paths fall back to `index.html`. Copy ONE of this pair. |
 | [`nginx.conf.static.example`](nginx.conf.static.example) | Same fragment for **hand-authored HTML**: unknown paths 404. See "SPA vs. plain static". |
-| [`publish/publish-scp.ps1.example`](publish/publish-scp.ps1.example) | **Push** publish: build locally, scp to the box via a stage-then-swap. |
+| [`publish/publish-scp.ps1.example`](publish/publish-scp.ps1.example) | **Push** publish: build locally, scp to the box via a stage-then-swap. Copy to `publish-scp.ps1`. |
 | [`publish/deploy-pull.sh.example`](publish/deploy-pull.sh.example) + [`.service`](publish/deploy-pull.service.example) / [`.timer`](publish/deploy-pull.timer.example) | **Pull** publish: the box clones the repo and `git pull`s on a systemd-timer poll. |
 
 ## Bring it up on the box

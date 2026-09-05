@@ -66,8 +66,9 @@ runs this template end-to-end yet.** The ledger, with what each one proved, is i
   repo, so that pointer is for the maintainer's reference and isn't needed to use this template.
   That's an app-internal concern, orthogonal to this repo's deploy concern.
 - **No lint/test CI on this repo itself** — the `.example` files are copied and adapted per
-  consumer, who owns linting/testing their own copy (as `tools-site` does — its `publish.ps1` is
-  checked by `Tooling`'s CI, not by anything here). The one workflow in `.github/workflows/` is the
+  consumer, who owns linting/testing their own copy (as `tools-site` does — its `publish.ps1`, the
+  real file this repo's `publish-scp.ps1.example` was genericized from, is checked by `Tooling`'s CI,
+  not by anything here). The one workflow in `.github/workflows/` is the
   maintainer's Discord push notifier: repo plumbing, not template content. If you clone this repo
   rather than cherry-picking files, delete it — it calls a shared workflow with a webhook secret
   you don't have, and skips green when that secret is unset.

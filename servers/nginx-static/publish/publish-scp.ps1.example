@@ -3,7 +3,7 @@
     Build a static site and publish it to a remote nginx container by scp (push model).
 
 .DESCRIPTION
-    Copy to `publish.ps1` in your app repo and adapt the CONFIG block below. This is the PUSH
+    Copy to `publish-scp.ps1` in your app repo and adapt the CONFIG block below. This is the PUSH
     publish model: build locally, then scp the output to the box's bind-mount directory. Use it
     when the box cannot (or should not) hold a clone of the repo -- a private repo you can't or
     won't give the box a read-only deploy key for, or a box with no repo access. If the box CAN
@@ -18,10 +18,6 @@
 
     Content-only, and content needs no restart -- this script never ships nginx.conf. What each
     kind of change does need is in the "Updating" section linked above, not restated here.
-    If your build hashes asset filenames (Vite etc.), a fresh index.html always references
-    the assets that shipped alongside it -- server-side. A returning visitor's browser can still
-    hold a heuristically-cached old index.html across a publish; the SPA nginx.conf answers that by
-    sending index.html Cache-Control: no-cache.
 
     Publishes via a remote STAGING directory, not a direct scp into the live web-root dir:
 
@@ -61,7 +57,12 @@
         top-level compose.yaml reads as a stack dir and is refused (rename that asset).
       * Explicit $LASTEXITCODE checks after each native call: PowerShell only auto-throws on a
         native nonzero exit under 7.4+ with $PSNativeCommandUseErrorActionPreference on. The
-        checks make failure loud on any pwsh.
+        checks make failure loud on any pwsh. One Windows PowerShell 5.1 caveat: with
+        $ErrorActionPreference='Stop', a native command's stderr raises a terminating
+        NativeCommandError when stderr is MERGED into the pipeline (a `2>&1` on the invocation), so a
+        benign stderr line -- npm's warnings, ssh's one-time known-hosts notice -- would abort before
+        the $LASTEXITCODE check even runs. Don't merge stderr on 5.1; pwsh 7+ (what the reference
+        consumer runs) is unaffected.
       * Uses only ordinary coreutils on the box (find, cp -a, rm -rf) -- no rsync (not always
         installed).
 
@@ -80,10 +81,11 @@
         ServerAliveCountMax 3
 
     A long username or a deep-subdomain host can push that ControlPath past the OS's ~100-byte
-    Unix-socket path limit, silently defeating the whole stanza -- swap in `%C` (a hash of user,
-    host, and port) instead of `%r@%h:%p` if `<host>`/your username are long. The keepalive lines
-    matter here too: without them a silently-dead connection (NAT/VPN drop, box reboot) can leave a
-    stale master that a later publish hangs against instead of cleanly reconnecting.
+    Unix-socket path limit, silently defeating the whole stanza -- swap in `%C` (a hash of the
+    connection: local host, host, port, user, and jump host) instead of `%r@%h:%p` if `<host>`/your
+    username are long. The keepalive lines matter here too: without them a silently-dead connection
+    (NAT/VPN drop, box reboot) can leave a stale master that a later publish hangs against instead of
+    cleanly reconnecting.
 
     Windows caveat: which ssh.exe this script's `& ssh`/`& scp` calls actually invoke depends on
     PATH order -- run `Get-Command ssh` to check. If it resolves to the Windows-optional-feature
@@ -104,7 +106,7 @@
     plus the web-root dir this script reships every run).
 
 .EXAMPLE
-    .\publish.ps1
+    .\publish-scp.ps1
 #>
 [CmdletBinding()]
 param(
@@ -117,10 +119,14 @@ $ErrorActionPreference = 'Stop'
 
 # === CONFIG: adapt these two to your app ===
 $LocalDirName = 'dist'    # the build output dir under this repo (e.g. dist, build; or 'site' if there's no build)
-$RemoteDirName = 'dist'   # the web-root dir name under $RemoteDir on the box -- a single subdirectory
-                          # name, NOT the stack dir itself or the repo root. If $RemoteDir/$RemoteDirName
-                          # compose onto the stack dir, the swap refuses it (it won't wipe a dir that
-                          # holds a compose.yaml -- every stack dir has one); the repo-root mount is pull-only.
+$RemoteDirName = '<WEB_ROOT_DIR_NAME>'   # the web-root dir name under $RemoteDir on the box, usually the
+                          # SAME as $LocalDirName. A single subdirectory name, NOT the stack dir itself or the
+                          # repo root. Left as a <PLACEHOLDER> on purpose: unlike $LocalDirName (a wrong value
+                          # dies loudly at the "No <dir>/index.html" check below), a wrong $RemoteDirName would
+                          # publish SILENTLY into a dir beside the served one, so the allowlist rejects the
+                          # placeholder up front rather than let a copy-paste point at the wrong dir. If
+                          # $RemoteDir/$RemoteDirName compose onto the stack dir, the swap refuses it (it won't
+                          # wipe a dir holding a compose.yaml -- every stack dir has one); repo-root is pull-only.
 # ===========================================
 
 # Allowlist, not a blocklist: $RemoteDirName/$LocalDirName/$RemoteDir all end up single-quoted
@@ -130,7 +136,10 @@ $RemoteDirName = 'dist'   # the web-root dir name under $RemoteDir on the box --
 function Assert-SafeName {
     param([string] $Name, [string] $Value, [switch] $AllowSlash)
     if ($AllowSlash) {
-        $ok = $Value -match '^/?[A-Za-z0-9](?:[A-Za-z0-9._/-]*[A-Za-z0-9])?$'
+        # \z, not $: in .NET regex `$` also matches just before a trailing newline, so a value from
+        # `Get-Content -Raw` or an $env: var with a stray LF (e.g. 'app\n') would pass and then name
+        # a directory literally ending in that LF on the box. \z anchors the true end of string.
+        $ok = $Value -match '^/?[A-Za-z0-9](?:[A-Za-z0-9._/-]*[A-Za-z0-9])?\z'
         $allowed = "letters, digits, '.', '_', '-', '/'"
         # The character class alone doesn't forbid a '..' PATH SEGMENT (e.g. '/opt/../etc') --
         # check each '/'-separated segment explicitly so a traversal can't hide inside an
@@ -139,7 +148,7 @@ function Assert-SafeName {
             $ok = $false
         }
     } else {
-        $ok = $Value -match '^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$'
+        $ok = $Value -match '^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?\z'   # \z not $ (see above)
         $allowed = "letters, digits, '.', '_', '-' (no '/' or '\')"
     }
     if (-not $ok) {
@@ -149,6 +158,17 @@ function Assert-SafeName {
 Assert-SafeName -Name 'LocalDirName' -Value $LocalDirName
 Assert-SafeName -Name 'RemoteDirName' -Value $RemoteDirName
 Assert-SafeName -Name 'RemoteDir' -Value $RemoteDir -AllowSlash
+
+# $Server is ssh's first positional argument (and is interpolated into "${Server}:..." for scp), so
+# validate it up front too -- otherwise the '<user>@<host>' placeholder survives the whole build and
+# only dies on "Could not resolve hostname" (exit 255), and a value starting with '-' is silently
+# eaten by ssh as an option. Allow `host` or `user@host`; \z (not $) for the same trailing-newline
+# reason as Assert-SafeName. Rejects angle brackets, a leading '-', ':' (ssh takes a port via -p, not
+# host:port), whitespace, and quotes. The ':' rule also rejects a bare IPv6 literal (e.g. ::1) -- for
+# that, add a `~/.ssh/config` Host alias and put the alias here (an alias passes).
+if ($Server -notmatch '^[A-Za-z0-9][A-Za-z0-9.@_-]*\z') {
+    throw "`$Server is '$Server' -- must be 'host' or 'user@host' (letters, digits, '.', '_', '-', '@', starting with a letter or digit); no leading '-', no ':', and no spaces, angle brackets, or quotes"
+}
 
 $localPath = Join-Path $PSScriptRoot $LocalDirName
 
