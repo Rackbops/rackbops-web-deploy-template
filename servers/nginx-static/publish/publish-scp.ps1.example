@@ -40,14 +40,23 @@
         NESTS (creates a "<dir>" folder inside the target) whenever the target already exists,
         which the staging dir always does. The trailing-dot form copies the CONTENTS instead.
       * $LocalDirName/$RemoteDirName/$RemoteDir are validated against an allowlist before anything
-        runs -- an unrestricted value (a stray '..', a '/' where a single dir name is expected, or
-        even just a "'" that could break out of the quoting in the remote command strings below)
-        could either resolve the live/staging paths onto the stack dir itself and have the swap
-        delete compose.yaml/nginx.conf/deploy/, or inject an arbitrary command on the box. Rejected
-        loudly, before any ssh/scp call.
-      * The swap verifies the staged build actually holds a site (`index.html` present) before
-        touching the live dir -- an scp that exits 0 with an unexpected layout (nesting, a
-        modified call site) refuses instead of wiping the live tree for nothing.
+        runs -- it rejects a value that could inject a remote command (a "'" breaking out of the
+        single-quoting in the command strings below) or traverse out of its subtree (a stray '..',
+        or a '/' where a single dir name is expected). Rejected loudly, before any ssh/scp call.
+        It does NOT judge where a validly-spelled target POINTS, though: $RemoteDir='/opt/stacks'
+        with $RemoteDirName='<app>' is legal and composes onto the stack dir itself. The swap guards
+        that (next bullet), not this allowlist.
+      * The swap verifies the staged build actually holds a site (`index.html` present) AND that the
+        live dir is not a Dockge stack dir (no compose.yaml in it -- every stack dir has one) before
+        touching it -- an scp that exits 0 with an unexpected layout (nesting, a modified call site),
+        or a $RemoteDir/$RemoteDirName pair that composed onto the stack dir, refuses instead of
+        wiping compose.yaml/nginx.conf/deploy/ for nothing. The guard's edges, all by design: it does
+        NOT protect a target aimed at a not-yet-populated stack dir (no compose.yaml there yet --
+        normal setup places it before the first publish), nor a stack dir whose compose file is named
+        compose.yml/docker-compose.yaml rather than compose.yaml, nor a compose onto the stacks-ROOT
+        (/opt/stacks) itself, which holds no compose.yaml of its own -- the guard checks the target
+        dir, not its parent. And it OVER-refuses one legit shape: a real web root that itself serves a
+        top-level compose.yaml reads as a stack dir and is refused (rename that asset).
       * Explicit $LASTEXITCODE checks after each native call: PowerShell only auto-throws on a
         native nonzero exit under 7.4+ with $PSNativeCommandUseErrorActionPreference on. The
         checks make failure loud on any pwsh.
@@ -107,8 +116,9 @@ $ErrorActionPreference = 'Stop'
 # === CONFIG: adapt these two to your app ===
 $LocalDirName = 'dist'    # the build output dir under this repo (e.g. dist, build; or 'site' if there's no build)
 $RemoteDirName = 'dist'   # the web-root dir name under $RemoteDir on the box -- a single subdirectory
-                          # name, never the stack dir itself or the repo root (push cannot target
-                          # either; the repo-root mount is pull-only)
+                          # name, NOT the stack dir itself or the repo root. If $RemoteDir/$RemoteDirName
+                          # compose onto the stack dir, the swap refuses it (it won't wipe a dir that
+                          # holds a compose.yaml -- every stack dir has one); the repo-root mount is pull-only.
 # ===========================================
 
 # Allowlist, not a blocklist: $RemoteDirName/$LocalDirName/$RemoteDir all end up single-quoted
@@ -175,9 +185,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Output "Swapping the staged build into $Server`:$remoteLive (local copy on the box, no network)..."
-& ssh $Server "test -f '$remoteStaging/index.html' && mkdir -p '$remoteLive' && find '$remoteLive' -mindepth 1 -delete && cp -a '$remoteStaging'/. '$remoteLive'/"
+& ssh $Server "test -f '$remoteStaging/index.html' && mkdir -p '$remoteLive' && test ! -e '$remoteLive/compose.yaml' && find '$remoteLive' -mindepth 1 -delete && cp -a '$remoteStaging'/. '$remoteLive'/"
 if ($LASTEXITCODE -ne 0) {
-    throw "swap into '$remoteLive' on $Server failed (exit $LASTEXITCODE) -- either the staged build failed verification (live site untouched) or the swap failed partway (live site may be inconsistent); the staged build is left at '$remoteStaging' on the box -- inspect it, then re-run this script"
+    throw "swap into '$remoteLive' on $Server failed (exit $LASTEXITCODE) -- one of: the staged build failed verification (no index.html); OR '$remoteLive' already holds a compose.yaml, so it reads as a Dockge stack dir and the swap refused to wipe it -- either `$RemoteDir/`$RemoteDirName are misset and compose onto the stack dir (they compose to '$remoteLive'; publish into a web-root SUBDIR instead), or this really is your web root and it serves a top-level compose.yaml (rename that asset); OR the swap failed partway (live site may be inconsistent). In the first two cases the live site was NOT touched. The staged build is left at '$remoteStaging' on the box -- inspect it, then re-run this script"
 }
 
 # Cleanup is deliberately a separate, non-fatal call: by this point the live dir is already
