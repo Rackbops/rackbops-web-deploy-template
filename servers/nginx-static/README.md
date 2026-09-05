@@ -203,10 +203,14 @@ should become nginx's web root. Three choices:
 
 Pick the mount that puts every asset the page references under the web root.
 
-**The repo-root mount is pull-model only** — the push model's `publish-scp.ps1` refuses to target
-it (`$LocalDirName` can't be `.`); only a pull-model box's clone doubles as both the stack dir and
-the web root. **It's also currently inferred, not extracted from a running deployment** — no
-consumer in [`CONTEXT.md`](../../CONTEXT.md)'s "Known consumers" table runs it yet, per this repo's
+**The repo-root mount is pull-model only** — `publish-scp.ps1` publishes into a web-root SUBDIR
+(`$RemoteDir/$RemoteDirName`), and its swap refuses a target that already holds a `compose.yaml`
+(the Dockge stack-dir marker), so a two-knob misconfig can't wipe the config out of a stack dir that
+holds one. It's a marker check, not a full guard — a stack dir without a `compose.yaml` yet (or one
+named `compose.yml`) isn't caught; the script's own header lists the exact edges. Only a pull-model
+box's clone doubles as both the stack dir and the web root.
+**It's also currently inferred, not extracted from a running deployment** — no consumer in
+[`CONTEXT.md`](../../CONTEXT.md)'s "Known consumers" table runs it yet, per this repo's
 ground-truth rule.
 Two consequences to know before using it:
 
