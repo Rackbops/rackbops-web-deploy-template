@@ -24,12 +24,13 @@ Unit=<app>-deploy.service
 # the cycle.
 OnBootSec=2min
 OnUnitActiveSec=5min
-# Kept only as forward cover for a consumer who switches to OnCalendar=, NOT because it does
-# anything for the schedule above: systemd.timer(5) says Persistent= "only has an effect on timers
-# configured with OnCalendar=", and this timer is monotonic. It does still write a stamp file on
-# every trigger, but only the calendar path reads that back -- so it is NOT what catches the box up
-# after downtime here (OnBootSec= above is). Delete the line if you'd rather carry nothing unused.
-Persistent=true
+# No Persistent= here. On a monotonic timer it is not inert (the claim it once carried): it writes a
+# stamp that, on a start landing more than OnBootSec= (2min) into uptime with the service not yet
+# run this boot -- e.g. after `disable --now`, a reboot, then a late re-enable -- makes systemd treat
+# OnBootSec= as an already-expired one-shot and skip it, leaving OnUnitActiveSec= with no base and
+# the timer parked with no next run. A normal boot (timers.target within 2min) is unaffected.
+# Switching to OnCalendar=? Add `Persistent=true` then -- that is the only form it helps. (This
+# omits the line the reference consumer's unit carries; traced in systemd's timer.c, not run here.)
 
 [Install]
 WantedBy=timers.target
