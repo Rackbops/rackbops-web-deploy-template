@@ -66,6 +66,24 @@ from it rather than editing the `.example` free-hand.
   Cloudflare made its own IdP the default for Zero Trust orgs created from ~2026-06 and stopped
   auto-adding one-time PIN, so what a consumer's account actually carries depends on its age --
   re-check before rewording `gate/README.md` §1a's IdP note.
+- **The publish-scp connection/copy cost is by design -- #67 weighed three reductions and kept the
+  proven shape.** The four connections a publish opens (staging setup, transfer, swap, cleanup) are
+  enumerated in the scaffold itself (`publish-scp.ps1.example:69-71`; the calls are at `:197`/`:204`/
+  `:210`/`:219`), which also already documents the real remedy for handshake cost -- a ControlMaster
+  stanza (`:69-99`) -- with the caveat that the stock Windows client (`System32\OpenSSH`) *errors out*
+  on it rather than reusing connections (`:90-99`), so a stock-Windows consumer pays every handshake.
+  Against that baseline, `/code-review` proposed three reductions, all verified against the current
+  tree and all declined: (1) **folding the cleanup ssh into the swap tail** (4->3 connections)
+  sacrifices the deliberately-separated cleanup-failure warning (`:215-221`) unless a sentinel exit
+  code is added to keep both; (2) **`cp -al` in the swap** (`:210`) hardlinks instead of re-writing,
+  ~halving the copy time and the empty-live-dir window, but changes a twice-reviewed command for a
+  gain #67 measured at single-digit-to-tens-of-ms (staging/live are guaranteed siblings, `:193-194`,
+  so same-filesystem holds); (3) **tarring the build** (4->2 connections, and the trailing-dot nesting
+  gotcha disappears) adds Windows-bsdtar mode-bit and PowerShell<7.4 binary-pipe caveats. Only
+  `cp -al`'s **correctness** is provable from a dev session (a plain container per the docker-nucbox
+  constraint); the perf figures and any end-to-end are real-box claims. The proven shape was kept per
+  `CLAUDE.md`'s ground-truth rule; per-option detail lives in #67. (Verified against the current tree,
+  2026-09-05.)
 
 ---
 
