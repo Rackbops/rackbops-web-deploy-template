@@ -124,8 +124,20 @@ is what it confirms.
   which is right for a stable, already-established shared tool). If a second consumer picks the
   sidecar pattern too, it's a real second gate shape worth extracting here -- same ground-truth
   rule as the base-server tier: extract from a real consumer, not speculatively.
-- **Two pull-model refinements are deferred to the source (`rackbops`'s `deploy/`), not applied
-  here** (#83, #84). Both are `/code-review` proposals that are technically sound but would make the
+
+## Declined proposals (considered, not adopted -- do not re-raise)
+
+Changes a `/code-review` pass proposed against the scaffolds, each **weighed and declined** -- the
+template keeps its proven shape rather than leading its reference consumers free-hand (the
+ground-truth rule, top of file). Every one is CONFIRMED-mechanics-sound but a trade-off, not a fix,
+and none is provable end-to-end from a dev session. **A review pass -- including a future
+`/code-review` -- must not re-file these; `CLAUDE.md` carries the same instruction.** Revisit one only
+if the reference consumer it diverges from adopts it on a real box first, at which point it is
+re-genericized here. #81, #82, #83, #84 are closed *not planned*; #67 -- the publish-scp cost
+proposals (fold the cleanup ssh / `cp -al` in the swap / tar the build) -- is closed *completed*, its
+trade-off analysis recorded in the publish-scp cost bullet under **Confirmed facts** above.
+
+- **Pull model (#83, #84) -- declined for the template.** Both are `/code-review` proposals that are technically sound but would make the
   scaffold LEAD its reference consumer's proven `deploy/` instead of tracking it, and neither is
   provable from a dev session -- so per the ground-truth rule (top of file) they wait for `rackbops`
   to adopt them on a real box first, then get re-genericized here. Recorded so the analysis isn't
@@ -151,3 +163,31 @@ is what it confirms.
     box); and the timer file already documents the switch as a consumer OPTION
     (`deploy-pull.timer.example:32`), so the default stays the proven monotonic form rather than
     changing under every consumer.
+- **nginx serve/mount (#81, #82) -- declined for the template.**
+  Like #83/#84 above, both are `/code-review` proposals with CONFIRMED mechanics that are design
+  trade-offs rather than fixes -- each diverges from the reference consumers (#82 from a LIVE one), so
+  their own verdicts route them to the consumers, not a free-hand template edit, and neither is proven
+  end-to-end from a dev session. Recorded so the option isn't re-derived; the proven shapes stand
+  meanwhile. The two also partially conflict (see #81's added deny rule vs #82 removing them), so they
+  are alternatives, not a stack.
+  - **#81 -- directory-mount `conf.d` so `nginx -s reload` works after a pull.** Today's single-file
+    bind at `compose.yaml.example:68-73` (`./nginx.conf` -> `/etc/nginx/conf.d/default.conf`) pins the
+    old inode when a `git checkout` swaps it -- the sole reason the template rules out `reload` after
+    a pull (the caveat family at `nginx.conf.*.example:17-21`, `README.md:258-261`,
+    `deploy-pull.sh.example:162`). A directory mount (`./nginx` -> `/etc/nginx/conf.d`) resolves by
+    path each open, so `docker exec <app> nginx -s reload` reads the pulled file -- and `reload` is
+    validate-first, avoiding the `restart` -> `[emerg]` -> `restart: unless-stopped` crash-loop the
+    issue flags. Its `create_host_path: false` dependency already landed (#91). Cost: adds a
+    `location ^~ /nginx/ { return 404; }` for the repo-root knob (which #82 would then remove). Blocker:
+    diverges from BOTH reference consumers; the end-to-end reload needs a real box (spans compose +
+    both nginx headers + README + deploy-pull.sh).
+  - **#82 -- two sibling mounts as an allowlist for the repo-root knob.** Replace the repo-root mount
+    (`.`) + the deny blocklist (`nginx.conf.*.example:57-81`) with `./site` + `./styles` siblings and
+    `location /styles/ { root /usr/share/nginx; }` -- RFC 3986 clamps a page's `../styles` at root and
+    the `root` trick maps it, so only `site/`+`styles/` are ever served (an allowlist by
+    construction). That would retire the deny rules, the "`/` needs a root `index.html`/302" caveat,
+    the SPA 500-loop caveat, and the push-model exclusion. Blocker: the deny blocks it removes are the
+    public-repo safety mechanism hiding `.git/`, `compose.yaml`, `deploy/`, and the root `.ps1` that
+    carries `<user>@<host>` -- a security-relevant redesign, on the repo-root shape a LIVE consumer
+    already runs (`rackbops-ui-ux-std-lib` showcase, Known consumers above). Filing so the option is
+    recorded; adopt only if the consumers move to it.

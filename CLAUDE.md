@@ -33,6 +33,25 @@ Mark any claim you can't trace to a `CONTEXT.md` source **inferred** or **unknow
 Claims discipline. A false factual claim in a runbook (`gate/README.md`, a server README, the root
 `README.md`) is a MAJOR finding, not "docs polish."
 
+## Declined proposals -- do not re-raise in review
+
+A `/code-review` pass reads this file and `CONTEXT.md` as context. The proposals below were weighed
+and **declined** (their issues closed -- #81/#82/#83/#84 as *not planned*, #67 as *completed* with
+its trade-off analysis recorded): the template keeps its proven shape per the Ground-truth rule
+above. **Do not re-file them.** Each one's rationale, mechanics, and the blocker
+are in `CONTEXT.md`'s "Declined proposals" section; revisit one only if the reference consumer it
+diverges from adopts it on a real box first.
+
+- #67 -- publish-scp connection/copy cost (fold the cleanup ssh / `cp -al` in the swap / tar the build)
+- #83 -- fold the git stall guard into `deploy-pull.sh` (`GIT_SSH_COMMAND` + `git -c http.*`)
+- #84 -- switch the deploy-pull timer to `OnCalendar=*:0/5` + `Persistent=true`
+- #81 -- directory-mount `conf.d` so `nginx -s reload` works after a pull
+- #82 -- two sibling mounts (allowlist) for the repo-root web-root knob, dropping the deny rules
+
+No formal finding-suppression file exists for the local `/code-review` -- this context is the
+mechanism. A repo-root `REVIEW.md` "Do not report" section would additionally cover the managed
+GitHub Code Review service, if that is ever enabled on this repo.
+
 ## Public repo: no real infrastructure identifiers, ever
 
 This repo is **public**. Nothing real about anyone's infrastructure belongs in it -- no hostnames,
