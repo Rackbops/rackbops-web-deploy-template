@@ -32,7 +32,10 @@ fi
 # the id BEFORE vs AFTER the pull: `docker compose images` reports the RUNNING container's image
 # (still the old one until `up -d`), so it can't tell you a newer image was fetched -- the local
 # tag's id can.
-img="$(docker compose config --images "$SERVICE" | head -1)"
+# One line for one service; take the first with a parameter expansion, NOT `| head` -- under
+# `set -o pipefail` a `| head` can SIGPIPE-abort the caller if the writer keeps writing (the
+# anti-pattern nginx-static's deploy-pull.sh deliberately avoids; harmless here, consistent to match).
+img="$(docker compose config --images "$SERVICE")"; img="${img%%$'\n'*}"
 before="$(docker image inspect --format '{{.Id}}' "$img" 2>/dev/null || echo none)"
 
 docker compose pull "$SERVICE"
@@ -45,6 +48,7 @@ if [[ "$before" == "$after" ]]; then
 fi
 
 echo "<app>: $img changed ${before:0:19} -> ${after:0:19} -- recreating the container."
-# Recreate just the app with the new image; the cloudflared sidecar keeps running. --no-build so a
-# stray `build:` can never silently roll code back to a local build.
-docker compose up -d --no-build "$SERVICE"
+# Recreate just the app with the new image; the cloudflared sidecar keeps running. --force-recreate
+# so the swap is unconditional (we already know the digest moved), not left to compose's own change
+# detection; --no-build so a stray `build:` can never silently roll code back to a local build.
+docker compose up -d --no-build --force-recreate "$SERVICE"

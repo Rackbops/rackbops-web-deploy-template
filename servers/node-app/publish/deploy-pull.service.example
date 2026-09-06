@@ -1,8 +1,7 @@
 # <app> auto-deploy -- oneshot service that runs deploy-pull.sh once (pull the image, swap on a new digest).
 #
-# Copy to `deploy/<app>-deploy.service`, adapt <app>/<user>/paths, install as a SYSTEM unit under
-# /etc/systemd/system/. Install steps: the node-app README's "Installing the pull timer" (relative
-# paths won't resolve from your repo):
+# Install as `/etc/systemd/system/<app>-deploy.service` (adapt <app>/<user>/paths). Steps: the
+# node-app README's "The deploy-pull timer" section (relative paths won't resolve from your repo):
 #   https://github.com/Rackbops/rackbops-web-deploy-template/blob/main/servers/node-app/README.md
 #
 # It runs as a SYSTEM unit but drops to <user> via User= -- that drop-to-a-different-user is exactly

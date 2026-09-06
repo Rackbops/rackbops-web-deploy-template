@@ -39,7 +39,8 @@ cp publish/deploy-pull.sh.example /opt/stacks/<app>/deploy/deploy-pull.sh
 #    REGISTRY_USER + REGISTRY_TOKEN (a read:packages PAT for a PRIVATE image), and
 #    CLOUDFLARE_TUNNEL_TOKEN (this app's token tunnel from the gate runbook).
 
-# 3. Log in once so the first pull works (deploy-pull.sh also does this each run):
+# 3. Log in once so the first pull works (deploy-pull.sh also does this each run). ghcr.io is the
+#    REGISTRY default; use whatever you set REGISTRY to in .env:
 grep '^REGISTRY_TOKEN=' /opt/stacks/<app>/.env | cut -d= -f2- \
   | docker login ghcr.io -u <REGISTRY_USER> --password-stdin
 
@@ -60,6 +61,12 @@ tunnel wiring:
 - **Everything else is identical to `gate/README.md`** — follow it for the **Access app** (capture its
   AUD for the ingress rule), the **proxied CNAME**(s), and the **closed-door verify**
   (unauthenticated → **302** to the Access login, never 200).
+
+> **Skip gate §0's loopback checks.** `gate/README.md` step 0 verifies a *host* loopback bind
+> (`curl 127.0.0.1:<PORT>`, `ss -ltnp`). This tier publishes **no host port** — the sidecar reaches
+> the app in-network — so there's nothing to `ss` for. Check the origin with
+> `docker compose exec <app> wget -qO- http://localhost:8787/healthz` (or just the closed-door 302
+> once the tunnel is up) instead.
 
 (This is the same token-sidecar shape `rackbops-ui-ux-std-lib` uses; see `CONTEXT.md` → Known consumers.)
 
@@ -88,7 +95,9 @@ loop for each version bump.
   and recreates the container (or run `deploy/deploy-pull.sh` yourself). With a moving `:latest` this
   is automatic; with a pinned `IMAGE_TAG` bump `.env` first, then `docker compose up -d`.
 - **`compose.yaml`** → `docker compose --profile tunnel up -d`.
-- **`.env`** → `docker compose up -d` (recreates with the new env).
+- **`.env`** → `docker compose --profile tunnel up -d` (recreates the app **and** the profiled
+  cloudflared sidecar; a plain `up -d` wouldn't reach the sidecar, so a changed
+  `CLOUDFLARE_TUNNEL_TOKEN` wouldn't apply).
 - **A `deploy/*.service`/`*.timer`** → re-copy to `/etc/systemd/system/` + `sudo systemctl daemon-reload`.
 
 ## Removing this server

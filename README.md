@@ -35,8 +35,9 @@ shared gate; only how that port is served is per-server.**
 
 ## Using it
 
-1. Pick a base server under `servers/` (today: `nginx-static`). Copy its `.example` files into your
-   app repo, fill in the placeholders, and follow its `README.md` to get the origin running.
+1. Pick a base server under `servers/` (today: `nginx-static` or `node-app`). Copy its `.example`
+   files into your app repo, fill in the placeholders, and follow its `README.md` to get the origin
+   running.
 2. Follow [`gate/README.md`](gate/README.md): its step 0 verifies the loopback bind, and the rest
    puts the Cloudflare Access gate in front of it.
 
