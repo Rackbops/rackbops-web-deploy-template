@@ -16,7 +16,8 @@ the two runbooks (the gate, plus your chosen server).
   gate/                     # SHARED spine -- the origin-agnostic Cloudflare + loopback + verify runbook
   servers/
     nginx-static/           # base server: stock nginx serving static files  (BUILT)
-    (future siblings slot in here -- another static server, or a dynamic app server)
+    node-app/               # base server: a dynamic container app + per-app tunnel sidecar  (BUILT)
+    (future siblings slot in here -- e.g. another static server)
   .github/workflows/        # maintainer plumbing (a Discord push notifier), NOT template content
 ```
 
@@ -25,8 +26,9 @@ the two runbooks (the gate, plus your chosen server).
   server — because it genuinely does not change with the origin (proven identical across the real
   rollouts this was extracted from).
 - **[`servers/<name>/`](servers/)** holds only what actually differs per base server: the
-  container image, its config, and how new content/code reaches it. Today only
-  **[`servers/nginx-static/`](servers/nginx-static/)** exists.
+  container image, its config, and how new content/code reaches it. Today
+  **[`servers/nginx-static/`](servers/nginx-static/)** (static files) and
+  **[`servers/node-app/`](servers/node-app/)** (a dynamic container app) exist.
 
 The split point is clean: **everything from "the app binds `127.0.0.1:<HOST_PORT>`" outward is the
 shared gate; only how that port is served is per-server.**
@@ -44,7 +46,7 @@ shared gate; only how that port is served is per-server.**
 |---|---|---|---|
 | [`nginx-static`](servers/nginx-static/) | stock `nginx:alpine`, files on a read-only mount | Not for content; `nginx.conf` changes do — see its [Updating](servers/nginx-static/README.md#updating) | **Built** (extracted from real consumers) |
 | _a second static server_ (e.g. Node `serve`, Caddy) | serves files a different way | varies | Future — add when a real consumer needs it |
-| _a dynamic app server_ (Node/Bun/Python process) | a built image / live process | Yes — a process must reload code | Future — different serve/publish, **same gate** |
+| [`node-app`](servers/node-app/) | a built image + a per-app cloudflared token sidecar (no host port) | Yes — `deploy-pull` swaps the container on a new digest (see its [Updating](servers/node-app/README.md#updating)) | **Built** (extracted from artifact-console) |
 
 New servers are added **only when a real consumer needs one** — the tier is left open, not
 pre-scaffolded with empty flavors.

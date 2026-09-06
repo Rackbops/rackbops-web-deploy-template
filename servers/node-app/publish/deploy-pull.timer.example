@@ -1,0 +1,22 @@
+# <app> auto-deploy -- polls the registry for a new image by firing the paired .service on a schedule.
+#
+# Copy to `deploy/<app>-deploy.timer`, adapt <app>, install as a SYSTEM unit under /etc/systemd/system/
+# (paired with the .service). Install steps: the node-app README's "Installing the pull timer".
+#
+# OnUnitActiveSec is how quickly a newly-published image goes live (5 min reference default; shorter
+# polls the registry more often).
+[Unit]
+Description=<app> -- poll the registry for a new image
+
+[Timer]
+# Explicit pairing (not the same-stem default), so this file names the service it fires. Keep it in
+# sync with the .service filename.
+Unit=<app>-deploy.service
+# Runs 2 min after boot, then every 5 min after each run. Keep BOTH: OnUnitActiveSec= alone is
+# measured from the last activation, so after a reboot it would never fire until something ran the
+# service by hand -- the box would silently stop auto-deploying. OnBootSec= restarts the cycle.
+OnBootSec=2min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target

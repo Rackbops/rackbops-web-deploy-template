@@ -1,0 +1,59 @@
+# <app> -- a dynamic container app (a built image, not stock nginx), behind the Cloudflare Access
+# gate via a per-app cloudflared token-tunnel sidecar. Managed as a Dockge stack at /opt/stacks/<app>/.
+#
+# Copy to `compose.yaml`, render/fill `.env` (see .env.example), and fill the <PLACEHOLDERS>.
+# Runbooks (relative paths won't resolve from your repo):
+#   server: https://github.com/Rackbops/rackbops-web-deploy-template/blob/main/servers/node-app/README.md
+#   gate:   https://github.com/Rackbops/rackbops-web-deploy-template/blob/main/gate/README.md
+#
+# UNLIKE nginx-static, the app publishes NO host port: it is reachable ONLY in-network, by the
+# cloudflared sidecar over the compose network (service name `<app>`). That no-port bind is the
+# security floor; Cloudflare Access is the only door. (nginx-static binds 127.0.0.1:<PORT> because
+# it joins the box's SHARED host tunnel; a per-app token sidecar reaches the origin in-network, so
+# there is no host port to bind at all.) The tunnel's ingress (managed via the Cloudflare API, per
+# the gate runbook) points at `http://<app>:<CONTAINER_PORT>`.
+#
+# Reference consumer: artifact-console (`IMAGE=ghcr.io/rackbops/artifact-console`, container port
+# 8787, three named volumes config/state/store). It is a PRIVATE ghcr image, so publish/deploy-pull.sh
+# does `docker login` with a read:packages credential before pulling — see .env.example.
+
+services:
+  <app>:
+    # The published, versioned image. Use a MOVING tag (`:latest`) so publish/deploy-pull.sh swaps the
+    # container when a new digest is pushed; pin `:vX.Y.Z` instead for a reproducible, manual-bump
+    # deploy. Set both parts in .env (IMAGE, IMAGE_TAG) so deploy-pull.sh resolves the same ref.
+    image: ${IMAGE}:${IMAGE_TAG:-latest}
+    container_name: <app>
+    restart: unless-stopped
+    # Only the app's OWN config here -- NOT the .env's secrets (CLOUDFLARE_TUNNEL_TOKEN, REGISTRY_TOKEN),
+    # which this container has no need to see. Prefer explicit vars over `env_file: [.env]`, which would
+    # load every secret in .env into the app. artifact-console's image already defaults AC_HOST=0.0.0.0,
+    # AC_CONFIG_DIR=/config, AC_STATE_DIR=/state, so most deploys need nothing here.
+    environment:
+      - AC_HOST=${AC_HOST:-0.0.0.0}
+    volumes:
+      # Named volumes: Docker creates them owning the image's dir uid, so the non-root container user
+      # can write (the WAL SQLite in /state needs this). Three per artifact-console: config/state/store.
+      - config:/config
+      - state:/state
+      - store:/store
+    # NO `ports:` -- reachable only in-network via the cloudflared sidecar below.
+
+  cloudflared:
+    # Per-app token tunnel: confines this app's blast radius (its own tunnel + token), vs joining the
+    # box's shared host tunnel. Ingress + Access are configured Cloudflare-side (the gate runbook);
+    # this sidecar just runs the tunnel with the token.
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    restart: unless-stopped
+    depends_on:
+      - <app>            # origin up before the tunnel routes to it
+    profiles:
+      - tunnel           # opt-in: `docker compose --profile tunnel up -d` brings up the gate too
+
+volumes:
+  config:
+  state:
+  store:

@@ -100,6 +100,7 @@ real box and the *shared* gate proves that piece end-to-end.
 | `Rackbops/Tooling` -> `tools-site` | nginx-static | push (scp) | **Source.** Live on its own copy; the server + gate were extracted from it. |
 | `Rackbops/rackbops` | nginx-static | pull (git timer) | **Source.** Live on its own `deploy/`; migration onto this template is planned, not done. |
 | `Rackbops/rackbops-ui-ux-std-lib` showcase | nginx-static | pull (git timer) | **Live** (`Rackbops/rackbops-ui-ux-std-lib#2`, shipped). Confirms the repo-root web-root knob for real (sibling `../styles` import) -- but its gate is `Tooling/docs/per-app-cloudflare-access-tunnel.md`'s **per-app token-sidecar tunnel** (zero published host port; `cloudflared` sidecar in its own compose project), not this repo's shared loopback-bound-port `gate/`. `Tooling`'s own doc calls that pattern out as the right one for a brand-new app-specific endpoint, so this is a deliberate divergence, not a template gap -- see [Open questions](#open-questions). |
+| `Rackbops/artifact-console` | **node-app** | pull (`deploy-pull` timer, image-digest diff) | **Source of `node-app`.** The dynamic-app tier was extracted from its shipped `deploy/` (image `ghcr.io/rackbops/artifact-console`, container port 8787, three named volumes config/state/store). Uses the **per-app token-sidecar** tunnel (like std-lib), not the shared loopback-bound `gate/`. Going live on nucbox is pending (`artifact-console#23`'s apply). |
 
 **The repo-root web-root knob is now run for real** -- by the `rackbops-ui-ux-std-lib` showcase
 above (the sibling `../styles` import), so it is no longer inferred-only: the knob itself and both
@@ -110,10 +111,12 @@ is what it confirms.
 
 ## Open questions
 
-- **A second base server's shape** -- probe: when a real consumer needs a non-nginx static server
-  or a dynamic app server, extract *its* `servers/<name>/` from that real consumer (not
-  speculatively), and decide then whether any publish/serve logic is genuinely shared enough to
-  lift out of the per-server dirs.
+- **A second base server's shape** -- **partly resolved:** the dynamic-app case is now built as
+  [`servers/node-app/`](servers/node-app/), extracted from `Rackbops/artifact-console` (a real
+  consumer, not speculatively). Its publish/serve logic (an image-digest `deploy-pull` that swaps the
+  container, a token-tunnel sidecar) is genuinely different from nginx-static's git/scp file publish,
+  so nothing was lifted into a shared dir -- the per-server split holds. Still open for a *non-nginx
+  static* server, if a real consumer ever needs one.
 - **Where the shared gate lives once a dynamic-server variant exists** -- probe: with two real
   server tiers using the same gate, confirm the single shared `gate/` still serves both cleanly, or
   whether anything gate-side needs a per-server hook. No action until that second tier is real.
@@ -121,9 +124,12 @@ is what it confirms.
   `rackbops-ui-ux-std-lib` (see Known consumers above) used it instead of this repo's shared
   loopback-bound-port gate, on `Tooling/docs/per-app-cloudflare-access-tunnel.md`'s explicit
   advice that it's the right shape for a brand-new app-specific endpoint (vs. this repo's gate,
-  which is right for a stable, already-established shared tool). If a second consumer picks the
-  sidecar pattern too, it's a real second gate shape worth extracting here -- same ground-truth
-  rule as the base-server tier: extract from a real consumer, not speculatively.
+  which is right for a stable, already-established shared tool). **Now two real consumers:**
+  `rackbops-ui-ux-std-lib` and, via [`servers/node-app/`](servers/node-app/), `artifact-console` both
+  use it. The ground-truth threshold is met, so extracting the token-sidecar as a documented second
+  gate shape here is now justified -- a follow-up. Until then, `node-app`'s README documents the
+  token-tunnel divergence inline and defers the shared parts (Access app, DNS, closed-door verify) to
+  `gate/README.md`.
 
 ## Declined proposals (considered, not adopted -- do not re-raise)
 
