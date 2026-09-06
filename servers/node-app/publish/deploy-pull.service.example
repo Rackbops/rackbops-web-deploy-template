@@ -1,0 +1,26 @@
+# <app> auto-deploy -- oneshot service that runs deploy-pull.sh once (pull the image, swap on a new digest).
+#
+# Install as `/etc/systemd/system/<app>-deploy.service` (adapt <app>/<user>/paths). Steps: the
+# node-app README's "The deploy-pull timer" section (relative paths won't resolve from your repo):
+#   https://github.com/Rackbops/rackbops-web-deploy-template/blob/main/servers/node-app/README.md
+#
+# It runs as a SYSTEM unit but drops to <user> via User= -- that drop-to-a-different-user is exactly
+# why it's a system unit, not a `--user` one (a user manager can only run services as its own user).
+# UNLIKE nginx-static's privilege-light pull, this one runs docker (login + compose pull + up -d), so
+# <user> MUST be in the `docker` group -- which is root-equivalent. See the README's trust note.
+#
+# Type=oneshot disables systemd's start timeout by DEFAULT, so set TimeoutStartSec= or a hung pull
+# parks the unit running forever (and the paired timer's OnUnitActiveSec= only re-arms from the last
+# activation, so it never retries). On timeout systemd marks it failed and kills the cgroup, letting
+# the next timer cycle try again. 6min suits a multi-arch pull over a home uplink; raise for a slow link.
+[Unit]
+Description=<app> -- pull the latest image and recreate on a new digest
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+TimeoutStartSec=6min
+User=<user>
+ExecStart=/bin/bash /opt/stacks/<app>/deploy/deploy-pull.sh

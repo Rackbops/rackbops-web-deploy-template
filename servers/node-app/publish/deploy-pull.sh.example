@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# <app> auto-deploy -- pull the published image and recreate the container ONLY when the digest moved.
+#
+# Copy to `deploy/deploy-pull.sh` in your app repo; set STACK_DIR + SERVICE below. A systemd system
+# timer (the paired .service/.timer) runs it on a poll. UNLIKE nginx-static's pull model (a git clone
+# + logged reminders, no docker), a container app must actually SWAP its image, so this DOES run
+# docker: log in to the registry, `compose pull`, and `up -d` when-and-only-when the local image for
+# the tag changed. That means the timer's user must be in the `docker` group (root-equivalent) -- see
+# the README's trust note.
+#
+# The app NEVER pulls itself. This external one-shot is the only thing that swaps the image -- design
+# §10's load-bearing "the thing being replaced never performs its own replacement" (1.x's in-place
+# self-heal crash-looped the box 53,000+ times, un-runnable in the broken state). A periodic one-shot
+# timer, NOT a daemon watching the docker socket (rejected -- it defeats the point of dockerizing).
+set -euo pipefail
+
+STACK_DIR="/opt/stacks/<app>"   # the Dockge stack dir (compose.yaml + .env live here)
+SERVICE="<app>"                 # the compose service whose image is swapped
+
+cd "$STACK_DIR" || exit 1
+
+# Private registry: authenticate before pulling. Read the read:packages credential from .env with
+# grep -- NOT `source .env`, so arbitrary .env content is never executed. A repeat login is a no-op.
+reg="$(grep -E '^REGISTRY=' .env 2>/dev/null | cut -d= -f2- || true)"; reg="${reg:-ghcr.io}"
+reg_user="$(grep -E '^REGISTRY_USER=' .env 2>/dev/null | cut -d= -f2- || true)"
+reg_token="$(grep -E '^REGISTRY_TOKEN=' .env 2>/dev/null | cut -d= -f2- || true)"
+if [[ -n "$reg_token" ]]; then
+  printf '%s' "$reg_token" | docker login "$reg" -u "${reg_user:-USERNAME}" --password-stdin >/dev/null
+fi
+
+# The image ref compose will use (resolved from compose.yaml + .env), and its LOCAL id now. Compare
+# the id BEFORE vs AFTER the pull: `docker compose images` reports the RUNNING container's image
+# (still the old one until `up -d`), so it can't tell you a newer image was fetched -- the local
+# tag's id can.
+# One line for one service; take the first with a parameter expansion, NOT `| head` -- under
+# `set -o pipefail` a `| head` can SIGPIPE-abort the caller if the writer keeps writing (the
+# anti-pattern nginx-static's deploy-pull.sh deliberately avoids; harmless here, consistent to match).
+img="$(docker compose config --images "$SERVICE")"; img="${img%%$'\n'*}"
+before="$(docker image inspect --format '{{.Id}}' "$img" 2>/dev/null || echo none)"
+
+docker compose pull "$SERVICE"
+
+after="$(docker image inspect --format '{{.Id}}' "$img" 2>/dev/null || echo none)"
+
+if [[ "$before" == "$after" ]]; then
+  echo "<app>: $img unchanged (${after:0:19}), nothing to do."
+  exit 0
+fi
+
+echo "<app>: $img changed ${before:0:19} -> ${after:0:19} -- recreating the container."
+# Recreate just the app with the new image; the cloudflared sidecar keeps running. --force-recreate
+# so the swap is unconditional (we already know the digest moved), not left to compose's own change
+# detection; --no-build so a stray `build:` can never silently roll code back to a local build.
+docker compose up -d --no-build --force-recreate "$SERVICE"
