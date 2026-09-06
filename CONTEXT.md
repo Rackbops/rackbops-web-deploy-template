@@ -124,3 +124,30 @@ is what it confirms.
   which is right for a stable, already-established shared tool). If a second consumer picks the
   sidecar pattern too, it's a real second gate shape worth extracting here -- same ground-truth
   rule as the base-server tier: extract from a real consumer, not speculatively.
+- **Two pull-model refinements are deferred to the source (`rackbops`'s `deploy/`), not applied
+  here** (#83, #84). Both are `/code-review` proposals that are technically sound but would make the
+  scaffold LEAD its reference consumer's proven `deploy/` instead of tracking it, and neither is
+  provable from a dev session -- so per the ground-truth rule (top of file) they wait for `rackbops`
+  to adopt them on a real box first, then get re-genericized here. Recorded so the analysis isn't
+  re-derived; the proven shapes stand meanwhile.
+  - **#83 -- fold the git stall guard into `deploy-pull.sh`.** Replace today's transport-split,
+    box-side README guard (`README.md:38`, the HTTPS `-c http.lowSpeed*` on the clone; `:84-86`, the
+    SSH `Host` alias's `ConnectTimeout`/`ServerAlive*`) with one versioned pair wrapping the pull at
+    `deploy-pull.sh.example:50`: `export GIT_SSH_COMMAND="ssh -o ConnectTimeout=15 -o
+    ServerAliveInterval=15 -o ServerAliveCountMax=3"` + `git -c http.lowSpeedLimit=1000 -c
+    http.lowSpeedTime=30 pull --ff-only --quiet`. Mechanics: each `-o`/`-c` is a no-op for the other
+    transport, and
+    `ssh -G` confirms (verified locally 2026-09-06) the `-o` timeouts merge in while a `Host` alias
+    keeps its `IdentityFile`/`IdentitiesOnly`. Blocker: `GIT_SSH_COMMAND` overrides a consumer's own
+    `core.sshCommand`/`GIT_SSH` -- an `ssh -i key` (non-alias) auth setup would lose its key -- it
+    diverges from `rackbops`, and the initial hand-run clone's guard stays in the README regardless
+    (the script only runs post-clone).
+  - **#84 -- switch the timer to `OnCalendar=*:0/5` + `Persistent=true`** (from
+    `OnBootSec=2min`+`OnUnitActiveSec=5min`, `deploy-pull.timer.example:25-26`), which would retire
+    that timer's Persistent-omission rationale (`:27-33`) and the OnUnitActiveSec re-arm /
+    systemd#21600 hedge at `deploy-pull.service.example:39-48`. Blocker:
+    it replaces `rackbops`'s proven `OnUnitActiveSec=5min` (Sources, above); the boot catch-up it
+    relies on is pure systemd-timer behavior a container here can't exercise (unverified on a real
+    box); and the timer file already documents the switch as a consumer OPTION
+    (`deploy-pull.timer.example:32`), so the default stays the proven monotonic form rather than
+    changing under every consumer.
