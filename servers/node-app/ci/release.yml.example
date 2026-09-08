@@ -1,0 +1,85 @@
+name: release
+
+# Build and publish the multi-arch container image on a version tag. Copy to
+# .github/workflows/release.yml and fill the <PLACEHOLDERS>.
+#
+# ghcr.io/<owner>/<app>, multi-arch (amd64 + arm64), authenticated with the built-in
+# GITHUB_TOKEN (packages: write) -- no PAT needed. A GHCR package's org visibility is a one-time
+# setting applied AFTER the first publish (it cannot be set before the package exists).
+#
+# Runner: ubuntu-latest, not a self-hosted/disposable pool -- multi-arch buildx needs QEMU
+# emulation and reliable Docker-in-Docker, which GitHub-hosted runners provide out of the box.
+#
+# Reference consumer: Rackbops/kenzen's own .github/workflows/release.yml, which this file is
+# adapted from (Tooling#478 K4-6).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "existing tag to build and publish the image for"
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    # Personal infra (publishes to ghcr.io/<owner>/<app>). Guarded so a fork tagging a `v*` skips
+    # cleanly instead of fail-running a publish it has no rights for.
+    if: github.repository == '<owner>/<app>'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive + verify the image version (tag must match the app's own version)
+        id: meta
+        shell: bash
+        # A raw ${{ }} interpolation of workflow_dispatch.inputs.tag directly into the run:
+        # script is a classic Actions script-injection surface -- a crafted tag input could break
+        # out of the string and run arbitrary commands with this job's packages:write token.
+        # Routing untrusted input through env: instead means it only ever reaches the shell as
+        # the VALUE of $TAG, never as script text the shell parses. Found by an adversarial
+        # review on Rackbops/artifact-console's own release.yml (#150), then carried forward
+        # correctly into Kenzen's copy -- keep this pattern, don't revert to a raw ${{ }} splice.
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          # <VERSION-CHECK-SCRIPT> is YOUR app's own: read the version your /healthz actually
+          # reports (e.g. from a package.json, a VERSION file, a Cargo.toml -- whatever your app's
+          # own version.ts-equivalent reads), fail non-zero if it doesn't match "v$TAG" stripped of
+          # its leading v, and print the bare version on success. The point: the image tag is
+          # NEVER trusted on its own -- a tag that doesn't match what the running code will
+          # actually report fails the publish rather than shipping a mislabelled image. Kenzen's
+          # own version is scripts/version-tag.mjs, reading packages/server/package.json; yours
+          # will differ by language/layout.
+          version="$(<VERSION-CHECK-SCRIPT> "$TAG")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/<owner>/<app>:${{ steps.meta.outputs.version }}
+            ghcr.io/<owner>/<app>:latest
