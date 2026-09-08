@@ -23,6 +23,8 @@ container port `8787`, three named volumes `config`/`state`/`store`. The concret
 | `publish/deploy-pull.sh.example` | `/opt/stacks/<app>/deploy/deploy-pull.sh` | the one-shot: login → `compose pull` → digest-diff → `up -d` on change |
 | `publish/deploy-pull.service.example` | `/etc/systemd/system/<app>-deploy.service` | oneshot system unit, drops to `<user>` (must be in the `docker` group) |
 | `publish/deploy-pull.timer.example` | `/etc/systemd/system/<app>-deploy.timer` | polls the registry (`OnBootSec` + `OnUnitActiveSec`) |
+| `ci/release.yml.example` | `.github/workflows/release.yml` | build + push the multi-arch image on a `v*` tag |
+| `ci/image-ratchet.md` | (adapt, don't copy) | how to build the real image in CI and assert it boots -- see [Building and shipping the image](#building-and-shipping-the-image) |
 
 ## Bring it up on the box
 
@@ -99,6 +101,16 @@ loop for each version bump.
   cloudflared sidecar; a plain `up -d` wouldn't reach the sidecar, so a changed
   `CLOUDFLARE_TUNNEL_TOKEN` wouldn't apply).
 - **A `deploy/*.service`/`*.timer`** → re-copy to `/etc/systemd/system/` + `sudo systemctl daemon-reload`.
+
+## Building and shipping the image
+
+Two pieces live under [`ci/`](ci/), factored out because they're proven CI, not the deploy shape
+above: [`release.yml.example`](ci/release.yml.example) (copy-and-fill-`<PLACEHOLDERS>`, builds
+and pushes the multi-arch image on a `v*` tag) and [`image-ratchet.md`](ci/image-ratchet.md) (a
+pattern to adapt, not a template -- building the real image in CI and asserting it actually boots
+catches a class of bug unit tests can't: something the build forgot to `COPY`, a path that only
+resolves in dev mode). Both are modeled on `Rackbops/kenzen`'s own workflows -- see `image-ratchet.md`
+for why the ratchet itself isn't a drop-in `.yml.example` the way `release.yml` is.
 
 ## Removing this server
 
