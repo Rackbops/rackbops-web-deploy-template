@@ -112,6 +112,30 @@ catches a class of bug unit tests can't: something the build forgot to `COPY`, a
 resolves in dev mode). Both are modeled on `Rackbops/kenzen`'s own workflows -- see `image-ratchet.md`
 for why the ratchet itself isn't a drop-in `.yml.example` the way `release.yml` is.
 
+### The Dockerfile itself: corepack is gone as of Node 25
+
+There's no `Dockerfile.example` here -- this tier pulls a published image, it doesn't build one --
+but the app repo that produces that image will need a multi-stage `Dockerfile`, and Node dropped
+`corepack` from core as of Node 25. The common `RUN corepack enable` (the usual way to get a pinned
+`pnpm` before `COPY . .`) fails outright on a `node:25-*`/`node:26-*` build stage --
+`corepack: not found`. Install pnpm directly instead, reading the version from `package.json`'s own
+`packageManager` field so a pnpm bump keeps flowing through that one field rather than a second pin
+in the Dockerfile:
+
+```dockerfile
+FROM node:26-alpine AS build
+WORKDIR /repo
+COPY package.json ./
+RUN npm install -g pnpm@"$(node -p "require('./package.json').packageManager.split('@')[1]")"
+COPY . .
+RUN pnpm install --frozen-lockfile
+```
+
+`Rackbops/kenzen`'s own `Dockerfile` is the real, working reference (its `package.json` carries
+`"packageManager": "pnpm@X.Y.Z"`). This is the fix from `kenzen#81` / `artifact-console#179` -- both
+hit the exact `corepack: not found` build failure moving their base image from `node:24-*` to
+`node:26-*`.
+
 ## Removing this server
 
 ```bash
