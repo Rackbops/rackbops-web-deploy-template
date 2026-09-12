@@ -1,11 +1,11 @@
 /**
  * `POST /api/file-issue` -- files (or finds) an issue in one click, without leaving the calling
- * page (<OWNER>/<REPO>#638, TC-8). Repo-generic by design (roshne amendment, 2026-09-12): the
+ * page (<OWNER>/<REPO>#638, TC-8). Repo-generic by design (<MAINTAINER> amendment, 2026-09-12): the
  * request names its target `repo`, checked against the `ALLOWED_REPOS` Worker var -- this
  * epic's tools-site page is one caller sending `<OWNER>/<REPO>`, not the only one this Worker
  * is built for. Read `README.md`'s "One-click filer Worker" section for the design decision and
  * the deploy/rotation runbook -- deploying this Worker and setting its secrets/vars are
- * roshne's own steps; nothing here ever holds a token or an Access value.
+ * <MAINTAINER>'s own steps; nothing here ever holds a token or an Access value.
  *
  * Behind an Access application on the tools-site hostname(s), so an unauthenticated request
  * never reaches `fetch` below at all; this Worker still verifies the JWT itself (defence in

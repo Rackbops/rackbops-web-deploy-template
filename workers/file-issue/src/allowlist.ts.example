@@ -3,7 +3,7 @@
  * exactly like an allowed action filing, never an arbitrary issue an authenticated-but-untrusted
  * caller could use this Worker to create in an arbitrary repo.
  *
- * REPO-GENERIC BY DESIGN (roshne amendment, 2026-09-12): this Worker is not Tooling-only -- the
+ * REPO-GENERIC BY DESIGN (<MAINTAINER> amendment, 2026-09-12): this Worker is not Tooling-only -- the
  * request itself names its target `repo`, checked against the server-side `ALLOWED_REPOS` Worker
  * var (never trusted from the client). `ALLOWED_TITLE_PREFIXES` is likewise a Worker var, applied
  * to every allowed repo alike; this epic's own tools-site page only ever sends `<OWNER>/<REPO>`

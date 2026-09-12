@@ -12,7 +12,7 @@ routes = [
   { pattern = "<HOSTNAME_2>/api/file-issue", zone_name = "<ZONE_2>" },
 ]
 
-# Repo-generic by design (roshne amendment, 2026-09-12): this Worker is not Tooling-only, so
+# Repo-generic by design (<MAINTAINER> amendment, 2026-09-12): this Worker is not Tooling-only, so
 # WHICH repos/titles it will act on is itself config, not a hardcoded constant -- committed here
 # (not secret: an allowlist is meant to be reviewable in a PR diff, the same way labels.json's
 # standard is). ACCESS_TEAM_DOMAIN, ACCESS_AUD and GITHUB_TOKEN remain Worker SECRETS

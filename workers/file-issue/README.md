@@ -38,13 +38,17 @@ from being *delivered*, only from being *read* by the calling page's JS).
 
 1. Copy every `.example` file into your app repo under (for example) `worker/`, dropping the
    `.example` suffix (`src/index.ts.example` -> `src/index.ts`, `package.json.example` ->
-   `package.json`, etc.).
+   `package.json`, etc.). There is no `package-lock.json.example` -- `npm ci` in step 4
+   generates a real one from `package.json`, same as any other npm project.
 2. Fill in `wrangler.toml`'s placeholders: `<WORKER_NAME>`, the route(s) (`<HOSTNAME_n>` /
    `<ZONE_n>` -- delete the second route entirely if you only have one hostname), and the two
    `[vars]` (`ALLOWED_REPOS`, `ALLOWED_TITLE_PREFIXES` -- see "Configuration" below).
 3. Fill in `package.json`'s `<PACKAGE_NAME>`.
-4. `npm ci`, then `npx wrangler login` (once per machine) and `npx wrangler deploy`.
-5. Set the three secrets (never committed, never in `wrangler.toml`):
+4. **Before running anything below, do the "What to adapt" step for `src/allowlist.ts`'s
+   `labels.json` import** (see that section) -- skip it and `wrangler deploy`'s bundling step
+   fails to resolve the import in a fresh repo with no `labels.json` three directories up.
+5. `npm ci`, then `npx wrangler login` (once per machine) and `npx wrangler deploy`.
+6. Set the three secrets (never committed, never in `wrangler.toml`):
    ```bash
    npx wrangler secret put GITHUB_TOKEN
    npx wrangler secret put ACCESS_TEAM_DOMAIN
@@ -55,7 +59,7 @@ from being *delivered*, only from being *read* by the calling page's JS).
    - **`ACCESS_TEAM_DOMAIN`** -- your Zero Trust team domain (`<team>.cloudflareaccess.com`).
    - **`ACCESS_AUD`** -- the AUD tag of the Access application already gating this hostname
      (Cloudflare Zero Trust dashboard -> Access -> Applications -> your app -> Overview).
-6. Verify:
+7. Verify:
    ```bash
    curl -sI https://<your-hostname>/api/file-issue    # expect 302 (the Access redirect), never content
    ```
@@ -71,7 +75,18 @@ from being *delivered*, only from being *read* by the calling page's JS).
   is meant to be reviewable in a PR diff.
 - **`ALLOWED_TITLE_PREFIXES`** -- comma-separated list of required title prefixes, applied to
   every repo in `ALLOWED_REPOS` alike. A request whose title doesn't start with one of these is
-  refused with a 400. Both vars parse to an empty list when unset -- **fail closed**: an empty
+  refused with a 400. **Matched as a literal string prefix, and any trailing space you include is
+  part of it.** `"repo:${repo} is:issue ..."` aside, this is a plain `String.startsWith` check: a
+  request title matches if it starts with the *exact characters* of one configured prefix, space
+  included. If your own title-generating code always writes a space after the prefix (as in
+  `"Toolchain: upgrade Cargo..."`), set the prefix here as `"Toolchain: "` (trailing space, inside
+  the quotes) to match what you actually intend the visible, human-facing prefix to be -- an
+  easy copy/paste mistake to drop, since a trailing space is invisible in most editors and this
+  file's own comments and PR/issue text can silently eat it. Dropping it doesn't reject anything
+  (a shorter prefix without the space still matches the same titles, since they still start with
+  those characters) -- it just means the configured value no longer matches what you can visibly
+  see as the intended prefix, which is confusing to debug later, not a runtime break. Both vars
+  parse to an empty list when unset -- **fail closed**: an empty
   `ALLOWED_REPOS`/`ALLOWED_TITLE_PREFIXES` rejects every request, it does not silently allow
   everything.
 
@@ -85,6 +100,10 @@ from being *delivered*, only from being *read* by the calling page's JS).
 - **The GitHub `User-Agent` string** in `src/github.ts` (`"tools-site-file-issue-worker"`) --
   cosmetic, but give it a name describing *your* Worker rather than leaving Tooling's.
 - **`wrangler.toml`'s second route** -- delete it if your site only has one hostname.
+- **The `<MAINTAINER>` placeholder** in a couple of source comments (dated design-decision notes
+  like "repo-generic by design (`<MAINTAINER>` amendment, ...)") -- purely a comment-level
+  attribution stub, no runtime effect either way. Fill it in with whoever made that call in your
+  copy, or leave the literal placeholder text in place; nothing reads it at runtime.
 
 ## Rotation
 
