@@ -1,0 +1,22 @@
+name = "<WORKER_NAME>"
+main = "src/index.ts"
+compatibility_date = "2026-08-22"
+
+# Both hostnames the tools-site Access application already covers (one app, two zones -- see
+# docs/tools-site-remote-access.md). Access runs at the edge before either route reaches this
+# Worker, so an unauthenticated request never gets here; the Worker still verifies the
+# Cf-Access-Jwt-Assertion itself (defence in depth, artifact-console's [edge] layer takes the
+# same posture).
+routes = [
+  { pattern = "<HOSTNAME_1>/api/file-issue", zone_name = "<ZONE_1>" },
+  { pattern = "<HOSTNAME_2>/api/file-issue", zone_name = "<ZONE_2>" },
+]
+
+# Repo-generic by design (roshne amendment, 2026-09-12): this Worker is not Tooling-only, so
+# WHICH repos/titles it will act on is itself config, not a hardcoded constant -- committed here
+# (not secret: an allowlist is meant to be reviewable in a PR diff, the same way labels.json's
+# standard is). ACCESS_TEAM_DOMAIN, ACCESS_AUD and GITHUB_TOKEN remain Worker SECRETS
+# (`wrangler secret put`, never committed) -- see the deploy/rotation runbook in ../README.md.
+[vars]
+ALLOWED_REPOS = "<OWNER>/<REPO>"
+ALLOWED_TITLE_PREFIXES = "<TITLE_PREFIX>"

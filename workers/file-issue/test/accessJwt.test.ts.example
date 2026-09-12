@@ -1,0 +1,86 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AccessError, verifyAccessJwt, _resetJwksCacheForTests } from "../src/accessJwt";
+import { AUD, TEAM_DOMAIN, certsUrl, makeAccessFixture } from "./support";
+
+function stubJwks(jwksResponseBody: string) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === certsUrl()) {
+        return new Response(jwksResponseBody, { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response("not found", { status: 404 });
+    }),
+  );
+}
+
+describe("verifyAccessJwt", () => {
+  // See _resetJwksCacheForTests's own docstring: without this, jose's remote-JWKS cooldown
+  // makes a later test's fresh keypair fail with "no applicable key found" instead of the
+  // specific claim-check failure it's meant to exercise.
+  beforeEach(() => {
+    _resetJwksCacheForTests();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("rejects a missing token without making any network call", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    await expect(verifyAccessJwt(null, TEAM_DOMAIN, AUD)).rejects.toThrow(AccessError);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects when the Worker itself has no team domain / AUD configured", async () => {
+    await expect(verifyAccessJwt("irrelevant-token", "", AUD)).rejects.toThrow(AccessError);
+    await expect(verifyAccessJwt("irrelevant-token", TEAM_DOMAIN, "")).rejects.toThrow(AccessError);
+  });
+
+  it("accepts a validly signed token with the right issuer/audience/expiry", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    stubJwks(jwksResponseBody);
+    const token = await signToken();
+    await expect(verifyAccessJwt(token, TEAM_DOMAIN, AUD)).resolves.toBeUndefined();
+  });
+
+  it("rejects a token with the wrong audience -- the mutation guard: skip the aud check and this fails", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    stubJwks(jwksResponseBody);
+    const token = await signToken({ aud: "some-other-access-app" });
+    await expect(verifyAccessJwt(token, TEAM_DOMAIN, AUD)).rejects.toThrow(AccessError);
+  });
+
+  it("rejects a token from the wrong issuer (a different team domain)", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    stubJwks(jwksResponseBody);
+    const token = await signToken({ iss: "https://a-different-team.cloudflareaccess.com" });
+    await expect(verifyAccessJwt(token, TEAM_DOMAIN, AUD)).rejects.toThrow(AccessError);
+  });
+
+  it("rejects an expired token", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    stubJwks(jwksResponseBody);
+    const token = await signToken({ expiresIn: "-5m" });
+    await expect(verifyAccessJwt(token, TEAM_DOMAIN, AUD)).rejects.toThrow(AccessError);
+  });
+
+  it("rejects a token signed by a DIFFERENT key than the one in the JWKS (a forged/unknown signer)", async () => {
+    const legit = await makeAccessFixture();
+    const forged = await makeAccessFixture();
+    // Serve the LEGITIMATE fixture's JWKS, but sign the token with the forged fixture's own
+    // (different) key/kid -- an attacker's token can't be verified against a JWKS that never
+    // published its key at all, whether that's because `jose` can't find a matching `kid` or
+    // (if it somehow collided) the signature itself fails -- either way, this must reject.
+    stubJwks(legit.jwksResponseBody);
+    const token = await forged.signToken();
+    await expect(verifyAccessJwt(token, TEAM_DOMAIN, AUD)).rejects.toThrow(AccessError);
+  });
+
+  it("rejects garbage that isn't a JWT at all, without throwing an unhandled error", async () => {
+    const { jwksResponseBody } = await makeAccessFixture();
+    stubJwks(jwksResponseBody);
+    await expect(verifyAccessJwt("not-a-jwt", TEAM_DOMAIN, AUD)).rejects.toThrow(AccessError);
+  });
+});

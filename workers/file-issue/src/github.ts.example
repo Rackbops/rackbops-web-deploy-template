@@ -1,0 +1,112 @@
+/**
+ * GitHub REST/Search API calls for the file-issue Worker (<OWNER>/<REPO>#638, TC-8): dedupe
+ * by exact title, then create.
+ *
+ * KNOWN, ACCEPTED RACE: the search-then-create sequence below is not atomic. Two requests for
+ * the same finding, close enough together, could both see "not found" and both create an
+ * issue -- and GitHub's search index itself can lag a just-created issue by a few seconds, so
+ * even a single caller clicking twice in rapid succession isn't fully immune. This Worker has
+ * exactly one authenticated operator (Access-gated to the trusted-users policy) filing from one
+ * page with no automated retry loop, so the realistic collision rate is effectively zero, and
+ * the cost of a rare duplicate (a second `<TITLE_PREFIX>...` issue, trivially spotted and closed by
+ * a human, per #638's own acceptance step) is far below what a Durable Object or KV-based lock
+ * would cost to build and maintain for a stretch feature. Revisit if this Worker ever gets a
+ * second caller or an automated trigger.
+ */
+
+export class GitHubError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+export interface FiledIssue {
+  number: number;
+  url: string;
+}
+
+const API = "https://api.github.com";
+
+function headers(token: string): HeadersInit {
+  return {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "tools-site-file-issue-worker",
+  };
+}
+
+async function readError(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { message?: string };
+    return body.message ?? res.statusText;
+  } catch {
+    return res.statusText;
+  }
+}
+
+/** The open issue in `repo` whose title is EXACTLY `title` (a GitHub search match on its own is
+ * only a candidate -- the API's `in:title` is a token match, not exact, so every result is
+ * re-checked for byte-identical equality before being trusted, the same discipline the
+ * tools-site page's own `findFiledIssue` applies to `filed.json`). `null` when none match.
+ *
+ * `per_page=100` (the API's own ceiling) rather than a smaller page, so a real exact match
+ * that merely ranks outside the top handful of relevance-sorted results (busy repo, several
+ * open issues sharing tokens with this title) still gets found -- reviewed and raised from an
+ * initial 20 for exactly this reason. Only the FIRST page is fetched even so: beyond 100
+ * candidates for one title-search this function still falls through to "not found" and lets
+ * `createIssue` below run, which is the same accepted-race shape already documented on this
+ * module, not a new failure mode.
+ *
+ * Every failure -- a non-OK response, a network-level fetch rejection, or a 2xx body that
+ * doesn't have the expected shape -- becomes a {@link GitHubError}; nothing here can throw
+ * anything else, so a caller's `catch (err) { if (err instanceof GitHubError) ... }` can't be
+ * silently bypassed by an exception of a different shape (index.ts review finding: an earlier
+ * version left a raw `fetch` rejection or a malformed-body TypeError to propagate unguarded,
+ * which would have surfaced as Cloudflare's generic error page instead of this API's own
+ * `{error}` JSON envelope). */
+export async function findExistingIssue(repo: string, title: string, token: string): Promise<FiledIssue | null> {
+  try {
+    // A literal `"` inside a deterministically-generated title should never happen (tool/host
+    // names don't carry one), but escaping it defensively costs nothing and keeps the quoted
+    // phrase well-formed either way.
+    const escaped = title.replace(/"/g, '\\"');
+    const q = `repo:${repo} is:issue is:open in:title "${escaped}"`;
+    const res = await fetch(`${API}/search/issues?q=${encodeURIComponent(q)}&per_page=100`, {
+      headers: headers(token),
+    });
+    if (!res.ok) throw new GitHubError(`GitHub search failed: ${await readError(res)}`, res.status);
+    const data = (await res.json()) as { items: Array<{ number: number; html_url: string; title: string }> };
+    const exact = data.items.find((i) => i.title === title);
+    return exact ? { number: exact.number, url: exact.html_url } : null;
+  } catch (err) {
+    if (err instanceof GitHubError) throw err;
+    throw new GitHubError(`GitHub search failed: ${err instanceof Error ? err.message : String(err)}`, 0);
+  }
+}
+
+/** Creates the issue via the REST API. Throws {@link GitHubError} on anything but 201 -- see
+ * {@link findExistingIssue}'s docstring for why every failure shape, not just a non-OK
+ * response, ends up as this one error type. */
+export async function createIssue(
+  repo: string,
+  req: { title: string; body: string; labels: string[] },
+  token: string,
+): Promise<FiledIssue> {
+  try {
+    const res = await fetch(`${API}/repos/${repo}/issues`, {
+      method: "POST",
+      headers: { ...headers(token), "content-type": "application/json" },
+      body: JSON.stringify({ title: req.title, body: req.body, labels: req.labels }),
+    });
+    if (!res.ok) throw new GitHubError(`GitHub create failed: ${await readError(res)}`, res.status);
+    const data = (await res.json()) as { number: number; html_url: string };
+    return { number: data.number, url: data.html_url };
+  } catch (err) {
+    if (err instanceof GitHubError) throw err;
+    throw new GitHubError(`GitHub create failed: ${err instanceof Error ? err.message : String(err)}`, 0);
+  }
+}

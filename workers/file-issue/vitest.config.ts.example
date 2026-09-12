@@ -1,0 +1,23 @@
+import { defineConfig } from "vitest/config";
+import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
+
+// Runs the Worker's tests inside the REAL workerd runtime (not a Node approximation) --
+// deliberate for a security-reviewed write path: `Request`/`Response`/`fetch`/WebCrypto behave
+// exactly as they will in production, closing the "unit-tested but the real runtime differs"
+// gap this repo's own review-gate discipline calls out for a write path with a secret. Test-only
+// bindings below stand in for the Worker secrets `wrangler secret put` sets in production
+// (README.md's runbook) -- fake values, nothing that resembles a real token or AUD.
+export default defineConfig({
+  plugins: [
+    cloudflareTest({
+      wrangler: { configPath: "./wrangler.toml" },
+      miniflare: {
+        bindings: {
+          GITHUB_TOKEN: "test-github-token",
+          ACCESS_TEAM_DOMAIN: "test-team.cloudflareaccess.com",
+          ACCESS_AUD: "test-aud-value",
+        },
+      },
+    }),
+  ],
+});

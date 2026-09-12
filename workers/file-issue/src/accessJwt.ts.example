@@ -1,0 +1,65 @@
+/**
+ * Verify a Cloudflare Access JWT at this Worker -- DEFENCE IN DEPTH, not the primary gate,
+ * mirroring artifact-console's `access_jwt.py` (Rackbops/artifacts-console#338) exactly: Access
+ * already refuses an unauthenticated request at the edge before it reaches this route, but this
+ * Worker verifies the `Cf-Access-Jwt-Assertion` itself in case that edge config is ever wrong or
+ * missing for a request that somehow still arrives here.
+ *
+ * Every check, none skipped: the RS256 signature against the team's JWKS, `aud` equal to the
+ * Access application's AUD tag, `iss` equal to the team domain, and `exp` in the future (`jose`'s
+ * `jwtVerify` enforces `exp`/`nbf` by default; `issuer`/`audience` are passed explicitly below).
+ */
+import { createRemoteJWKSet, jwtVerify } from "jose";
+
+export const ACCESS_JWT_HEADER = "Cf-Access-Jwt-Assertion";
+
+export class AccessError extends Error {}
+
+function certsUrl(teamDomain: string): URL {
+  return new URL(`https://${teamDomain}/cdn-cgi/access/certs`);
+}
+
+// One remote JWK set per team domain -- `jose`'s createRemoteJWKSet fetches the JWKS once and
+// caches/refreshes it internally (handling key rotation itself), so a cache here (like
+// access_jwt.py's `_jwk_clients`) avoids a fresh HTTP fetch per request in the same isolate.
+const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
+
+function jwks(teamDomain: string): ReturnType<typeof createRemoteJWKSet> {
+  let set = jwksCache.get(teamDomain);
+  if (!set) {
+    set = createRemoteJWKSet(certsUrl(teamDomain));
+    jwksCache.set(teamDomain, set);
+  }
+  return set;
+}
+
+/** TEST-ONLY: clears the JWKS client cache. Never called from production code -- the test
+ * suite calls it in a `beforeEach`. Needed because `jose`'s `createRemoteJWKSet` enforces its
+ * own cooldown (default 30s) between JWKS re-fetch attempts for a key it can't find, specifically
+ * to stop a client hammering the endpoint on repeated bad `kid`s -- correct and desirable in
+ * production, but it means the SAME cached client, reused for a NEW test's differently-keyed
+ * token within that cooldown window, fails with "no applicable key found" instead of ever
+ * re-fetching, even though nothing is actually wrong. A fresh client (this reset) starts its own
+ * cooldown clock, so each test's first verification always gets a real, uncached fetch. */
+export function _resetJwksCacheForTests(): void {
+  jwksCache.clear();
+}
+
+/** Verifies `token` against `teamDomain`'s JWKS and `aud`, or throws {@link AccessError}. Never
+ * returns a falsy/partial result on a bad token -- a verification failure is always an
+ * exception, never a value the caller could mistake for success. */
+export async function verifyAccessJwt(token: string | null, teamDomain: string, aud: string): Promise<void> {
+  if (!token) throw new AccessError("no Cf-Access-Jwt-Assertion header");
+  if (!teamDomain || !aud) {
+    throw new AccessError("Worker misconfigured: ACCESS_TEAM_DOMAIN/ACCESS_AUD secret not set");
+  }
+  try {
+    await jwtVerify(token, jwks(teamDomain), {
+      issuer: `https://${teamDomain}`,
+      audience: aud,
+      algorithms: ["RS256"],
+    });
+  } catch (err) {
+    throw new AccessError(`invalid Access JWT: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}

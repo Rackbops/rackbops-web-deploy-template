@@ -18,6 +18,9 @@ the two runbooks (the gate, plus your chosen server).
     nginx-static/           # base server: stock nginx serving static files  (BUILT)
     node-app/               # base server: a dynamic container app + per-app tunnel sidecar  (BUILT)
     (future siblings slot in here -- e.g. another static server)
+  workers/
+    file-issue/             # Cloudflare Worker: an Access-gated GitHub issue filer  (BUILT)
+    (future siblings slot in here -- another small edge Worker, same shape)
   .github/workflows/        # maintainer plumbing (a Discord push notifier), NOT template content
 ```
 
@@ -29,9 +32,14 @@ the two runbooks (the gate, plus your chosen server).
   container image, its config, and how new content/code reaches it. Today
   **[`servers/nginx-static/`](servers/nginx-static/)** (static files) and
   **[`servers/node-app/`](servers/node-app/)** (a dynamic container app) exist.
+- **[`workers/<name>/`](workers/)** is a third, separate tier: small Cloudflare Workers that add
+  an edge-deployed API route onto a hostname an app **already** has gated (not an origin server
+  behind the loopback + tunnel gate at all -- no loopback bind, no tunnel ingress). Today
+  **[`workers/file-issue/`](workers/file-issue/)** (an Access-gated GitHub issue filer) exists.
 
 The split point is clean: **everything from "the app binds `127.0.0.1:<HOST_PORT>`" outward is the
-shared gate; only how that port is served is per-server.**
+shared gate; only how that port is served is per-server. A `workers/<name>/` Worker is additive to
+an already-gated hostname, not part of that split at all.**
 
 ## Using it
 

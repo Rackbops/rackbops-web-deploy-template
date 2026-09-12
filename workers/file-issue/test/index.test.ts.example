@@ -1,0 +1,301 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { env as rawEnv, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
+import worker, { type Env } from "../src/index";
+import { _resetJwksCacheForTests } from "../src/accessJwt";
+import { certsUrl, makeAccessFixture } from "./support";
+
+// `cloudflare:test`'s `env` merges wrangler.toml's real committed `[vars]` (ALLOWED_REPOS =
+// "<OWNER>/<REPO>", ALLOWED_TITLE_PREFIXES = "<TITLE_PREFIX>") with vitest.config.ts's
+// `miniflare.bindings` fixture values for the three SECRETS (GITHUB_TOKEN/ACCESS_TEAM_DOMAIN/
+// ACCESS_AUD -- never committed config, see wrangler.toml's own comment). Only the compile-time
+// type needs this cast to match this Worker's actual `Env` shape.
+const env = rawEnv as unknown as Env;
+
+const VALID_BODY = {
+  repo: "<OWNER>/<REPO>",
+  title: "<TITLE_PREFIX>upgrade Python on MILE to 3.14",
+  body: "Installed: 3.12.10 on MILE",
+  labels: ["chore", "priority: low"],
+};
+
+// Every real caller is this site's own same-origin fetch(), which a browser marks with
+// `Sec-Fetch-Site: same-origin` itself -- default it here so every OTHER test isn't forced to
+// know about the cross-site check; the two tests for that check override/omit it explicitly.
+function req(path: string, init: RequestInit = {}): Request {
+  const headers = new Headers({ "Sec-Fetch-Site": "same-origin" });
+  if (init.headers) {
+    for (const [key, value] of new Headers(init.headers)) headers.set(key, value);
+  }
+  return new Request(`https://<HOSTNAME_1>${path}`, { ...init, headers });
+}
+
+describe("Worker fetch handler (#638)", () => {
+  // See accessJwt.ts's _resetJwksCacheForTests docstring: without this, jose's remote-JWKS
+  // cooldown makes every JWT-dependent test after the first fail with a spurious 401.
+  beforeEach(() => {
+    _resetJwksCacheForTests();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("404s any path other than /api/file-issue", async () => {
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(req("/api/something-else", { method: "POST" }), env, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(404);
+  });
+
+  it("405s any method other than POST, naming the allowed method", async () => {
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(req("/api/file-issue", { method: "GET" }), env, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("POST");
+  });
+
+  it("403s a cross-site request (Sec-Fetch-Site: cross-site) before ever checking the JWT", async () => {
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      req("/api/file-issue", {
+        method: "POST",
+        headers: { "content-type": "application/json", "Sec-Fetch-Site": "cross-site" },
+        body: JSON.stringify(VALID_BODY),
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(403);
+  });
+
+  it("403s a request with no Sec-Fetch-Site header at all -- fail closed, not open", async () => {
+    const ctx = createExecutionContext();
+    const bare = new Request("https://<HOSTNAME_1>/api/file-issue", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(VALID_BODY),
+    });
+    const res = await worker.fetch(bare, env, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(403);
+  });
+
+  it("401s when the Cf-Access-Jwt-Assertion header is missing -- mutation guard: remove the JWT check and this fails", async () => {
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      req("/api/file-issue", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(VALID_BODY),
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(401);
+  });
+
+  it("400s when the title is outside the allowlist -- mutation guard: remove the title-prefix check and this fails", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input) === certsUrl()) return new Response(jwksResponseBody, { status: 200 });
+        return new Response("unexpected fetch in this test: " + String(input), { status: 500 });
+      }),
+    );
+    const token = await signToken();
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      req("/api/file-issue", {
+        method: "POST",
+        headers: { "content-type": "application/json", "Cf-Access-Jwt-Assertion": token },
+        body: JSON.stringify({ ...VALID_BODY, title: "Please upgrade Python on MILE" }),
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(400);
+  });
+
+  it("403s when the repo is not in ALLOWED_REPOS and makes NO GitHub call -- mutation guard: remove the repo allowlist check and this fails", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    const githubCalls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === certsUrl()) return new Response(jwksResponseBody, { status: 200 });
+        if (url.startsWith("https://api.github.com/")) {
+          githubCalls.push(url);
+          return new Response("should never be reached", { status: 500 });
+        }
+        return new Response("unexpected fetch in this test: " + url, { status: 500 });
+      }),
+    );
+    const token = await signToken();
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      req("/api/file-issue", {
+        method: "POST",
+        headers: { "content-type": "application/json", "Cf-Access-Jwt-Assertion": token },
+        body: JSON.stringify({ ...VALID_BODY, repo: "some-other/repo" }),
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(403);
+    expect(githubCalls).toEqual([]);
+  });
+
+  it("returns 200 existing:true and makes NO create call when the issue already exists -- mutation guard: skip the dedupe search and this fails", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    const createCalls: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === certsUrl()) return new Response(jwksResponseBody, { status: 200 });
+        if (url.startsWith("https://api.github.com/search/issues")) {
+          return new Response(
+            JSON.stringify({
+              items: [
+                { number: 701, html_url: "https://github.com/<OWNER>/<REPO>/issues/701", title: VALID_BODY.title },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        if (url === "https://api.github.com/repos/<OWNER>/<REPO>/issues" && init?.method === "POST") {
+          createCalls.push(init);
+          return new Response(JSON.stringify({ number: 999, html_url: "should-not-be-used" }), { status: 201 });
+        }
+        return new Response("unexpected fetch in this test: " + url, { status: 500 });
+      }),
+    );
+    const token = await signToken();
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      req("/api/file-issue", {
+        method: "POST",
+        headers: { "content-type": "application/json", "Cf-Access-Jwt-Assertion": token },
+        body: JSON.stringify(VALID_BODY),
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      number: 701,
+      url: "https://github.com/<OWNER>/<REPO>/issues/701",
+      existing: true,
+    });
+    expect(createCalls.length).toBe(0);
+  });
+
+  it("creates the issue and returns 201 when no existing match is found", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === certsUrl()) return new Response(jwksResponseBody, { status: 200 });
+        if (url.startsWith("https://api.github.com/search/issues")) {
+          return new Response(JSON.stringify({ items: [] }), { status: 200 });
+        }
+        if (url === "https://api.github.com/repos/<OWNER>/<REPO>/issues" && init?.method === "POST") {
+          // `repo` routes the URL only -- it must never leak into the GitHub payload itself.
+          expect(JSON.parse(init.body as string)).toEqual({
+            title: VALID_BODY.title,
+            body: VALID_BODY.body,
+            labels: VALID_BODY.labels,
+          });
+          return new Response(
+            JSON.stringify({ number: 702, html_url: "https://github.com/<OWNER>/<REPO>/issues/702" }),
+            { status: 201 },
+          );
+        }
+        return new Response("unexpected fetch in this test: " + url, { status: 500 });
+      }),
+    );
+    const token = await signToken();
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      req("/api/file-issue", {
+        method: "POST",
+        headers: { "content-type": "application/json", "Cf-Access-Jwt-Assertion": token },
+        body: JSON.stringify(VALID_BODY),
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(201);
+    expect(await res.json()).toEqual({ number: 702, url: "https://github.com/<OWNER>/<REPO>/issues/702" });
+  });
+
+  it("502s with the reason when GitHub itself fails (e.g. rate-limited)", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === certsUrl()) return new Response(jwksResponseBody, { status: 200 });
+        if (url.startsWith("https://api.github.com/search/issues")) {
+          return new Response(JSON.stringify({ message: "API rate limit exceeded" }), { status: 403 });
+        }
+        return new Response("unexpected fetch in this test: " + url, { status: 500 });
+      }),
+    );
+    const token = await signToken();
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      req("/api/file-issue", {
+        method: "POST",
+        headers: { "content-type": "application/json", "Cf-Access-Jwt-Assertion": token },
+        body: JSON.stringify(VALID_BODY),
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(502);
+    const data = (await res.json()) as { error: string };
+    expect(data.error).toContain("rate limit");
+  });
+
+  it("400s on a malformed JSON body", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input) === certsUrl()) return new Response(jwksResponseBody, { status: 200 });
+        return new Response("unexpected", { status: 500 });
+      }),
+    );
+    const token = await signToken();
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      req("/api/file-issue", {
+        method: "POST",
+        headers: { "content-type": "application/json", "Cf-Access-Jwt-Assertion": token },
+        body: "{not valid json",
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(400);
+  });
+});

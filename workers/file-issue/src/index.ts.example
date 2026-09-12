@@ -1,0 +1,113 @@
+/**
+ * `POST /api/file-issue` -- files (or finds) an issue in one click, without leaving the calling
+ * page (<OWNER>/<REPO>#638, TC-8). Repo-generic by design (roshne amendment, 2026-09-12): the
+ * request names its target `repo`, checked against the `ALLOWED_REPOS` Worker var -- this
+ * epic's tools-site page is one caller sending `<OWNER>/<REPO>`, not the only one this Worker
+ * is built for. Read `README.md`'s "One-click filer Worker" section for the design decision and
+ * the deploy/rotation runbook -- deploying this Worker and setting its secrets/vars are
+ * roshne's own steps; nothing here ever holds a token or an Access value.
+ *
+ * Behind an Access application on the tools-site hostname(s), so an unauthenticated request
+ * never reaches `fetch` below at all; this Worker still verifies the JWT itself (defence in
+ * depth -- see `accessJwt.ts`).
+ *
+ * CROSS-SITE REQUESTS (review-round finding): omitting CORS headers does NOT stop a cross-site
+ * request from being DELIVERED here -- CORS only governs whether the calling page's JS may
+ * READ the response, and Access's own session cookie may still ride along on a cross-site POST
+ * depending on Cloudflare Zero Trust's cookie SameSite setting, which lives outside this repo
+ * entirely. So this Worker checks the browser-set, JS-unspoofable `Sec-Fetch-Site` header itself
+ * (the Fetch Metadata mechanism every evergreen browser sends) and refuses anything that isn't
+ * `same-origin` -- fail closed on a missing header too, since the one legitimate caller is
+ * always this same site's own same-origin `fetch()` call.
+ */
+import { ACCESS_JWT_HEADER, AccessError, verifyAccessJwt } from "./accessJwt";
+import { RepoNotAllowedError, ValidationError, assertRepoAllowed, parseCsvEnv, validateFileIssueRequest } from "./allowlist";
+import { createIssue, findExistingIssue, GitHubError } from "./github";
+
+export interface Env {
+  GITHUB_TOKEN: string;
+  ACCESS_TEAM_DOMAIN: string;
+  ACCESS_AUD: string;
+  /** Comma-separated `owner/name` list -- the only repos this Worker will search/create issues
+   * in, regardless of what a request's `repo` field asks for. A committed `[vars]` entry in
+   * `wrangler.toml` (not a secret: the allowlist itself is meant to be reviewable in a PR diff,
+   * the same way `labels.json`'s standard is). */
+  ALLOWED_REPOS: string;
+  /** Comma-separated title-prefix list, applied to every repo in `ALLOWED_REPOS` alike. Also a
+   * committed `[vars]` entry. */
+  ALLOWED_TITLE_PREFIXES: string;
+}
+
+function json(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+}
+
+export default {
+  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname !== "/api/file-issue") {
+      return json(404, { error: "not found" });
+    }
+    if (request.method !== "POST") {
+      return new Response(JSON.stringify({ error: "method not allowed" }), {
+        status: 405,
+        headers: { "content-type": "application/json", Allow: "POST" },
+      });
+    }
+
+    // Fetch Metadata: a browser sets this itself and a page's own JS cannot override it, so
+    // it's a reliable signal a request did NOT originate from this same site -- reject before
+    // even checking the JWT (a cross-site request is refused regardless of what cookie/header
+    // it happens to carry). Missing entirely (a non-browser client, or a browser old enough not
+    // to send Fetch Metadata) fails closed too: the one legitimate caller is always this site's
+    // own same-origin fetch().
+    if (request.headers.get("Sec-Fetch-Site") !== "same-origin") {
+      return json(403, { error: "cross-site requests are not allowed" });
+    }
+
+    try {
+      await verifyAccessJwt(request.headers.get(ACCESS_JWT_HEADER), env.ACCESS_TEAM_DOMAIN, env.ACCESS_AUD);
+    } catch (err) {
+      if (err instanceof AccessError) return json(401, { error: err.message });
+      throw err;
+    }
+
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return json(400, { error: "request body must be valid JSON" });
+    }
+
+    let validated;
+    try {
+      validated = validateFileIssueRequest(payload, parseCsvEnv(env.ALLOWED_TITLE_PREFIXES));
+    } catch (err) {
+      if (err instanceof ValidationError) return json(400, { error: err.message });
+      throw err;
+    }
+
+    // A well-formed request naming a repo this Worker isn't configured for is refused with its
+    // own status (403, never 400): the shape is fine, the target just isn't permitted -- and
+    // this check runs BEFORE any GitHub call, so a disallowed repo can never even reach the
+    // dedupe search, let alone create anything.
+    try {
+      assertRepoAllowed(validated.repo, parseCsvEnv(env.ALLOWED_REPOS));
+    } catch (err) {
+      if (err instanceof RepoNotAllowedError) return json(403, { error: err.message });
+      throw err;
+    }
+
+    try {
+      const existing = await findExistingIssue(validated.repo, validated.title, env.GITHUB_TOKEN);
+      if (existing) {
+        return json(200, { number: existing.number, url: existing.url, existing: true });
+      }
+      const created = await createIssue(validated.repo, validated, env.GITHUB_TOKEN);
+      return json(201, { number: created.number, url: created.url });
+    } catch (err) {
+      if (err instanceof GitHubError) return json(502, { error: err.message });
+      throw err;
+    }
+  },
+} satisfies ExportedHandler<Env>;
