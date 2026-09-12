@@ -1,0 +1,109 @@
+import { describe, expect, it } from "vitest";
+import {
+  RepoNotAllowedError,
+  ValidationError,
+  assertRepoAllowed,
+  parseCsvEnv,
+  validateFileIssueRequest,
+} from "../src/allowlist";
+
+const TOOLCHAIN_PREFIX = ["<TITLE_PREFIX>"];
+
+const VALID = {
+  repo: "<OWNER>/<REPO>",
+  title: "<TITLE_PREFIX>upgrade Python on MILE to 3.14",
+  body: "Installed: 3.12.10 on MILE\nStandard: minor 3.14",
+  labels: ["chore", "priority: low"],
+};
+
+describe("validateFileIssueRequest", () => {
+  it("accepts a well-formed request", () => {
+    expect(validateFileIssueRequest(VALID, TOOLCHAIN_PREFIX)).toEqual(VALID);
+  });
+
+  it("accepts a title matching ANY of several allowed prefixes", () => {
+    const req = { ...VALID, title: "Kenzen: something" };
+    expect(validateFileIssueRequest(req, ["<TITLE_PREFIX>", "Kenzen: "])).toEqual(req);
+  });
+
+  it('rejects a title matching none of the allowed prefixes -- mutation guard: remove this check and this test fails', () => {
+    expect(() => validateFileIssueRequest({ ...VALID, title: "Please upgrade Python" }, TOOLCHAIN_PREFIX)).toThrow(
+      ValidationError,
+    );
+  });
+
+  it("rejects every title when ALLOWED_TITLE_PREFIXES is empty -- fail closed, not open", () => {
+    expect(() => validateFileIssueRequest(VALID, [])).toThrow(ValidationError);
+  });
+
+  it("rejects a non-string title", () => {
+    expect(() => validateFileIssueRequest({ ...VALID, title: 123 }, TOOLCHAIN_PREFIX)).toThrow(ValidationError);
+  });
+
+  it("rejects a title over GitHub's own 256-character issue-title limit", () => {
+    const tooLong = { ...VALID, title: "<TITLE_PREFIX>" + "x".repeat(300) };
+    expect(() => validateFileIssueRequest(tooLong, TOOLCHAIN_PREFIX)).toThrow(ValidationError);
+  });
+
+  it('rejects a malformed "repo" (not "owner/name")', () => {
+    expect(() => validateFileIssueRequest({ ...VALID, repo: "not-a-repo" }, TOOLCHAIN_PREFIX)).toThrow(
+      ValidationError,
+    );
+    expect(() => validateFileIssueRequest({ ...VALID, repo: 42 }, TOOLCHAIN_PREFIX)).toThrow(ValidationError);
+  });
+
+  it("rejects an empty or oversized body", () => {
+    expect(() => validateFileIssueRequest({ ...VALID, body: "" }, TOOLCHAIN_PREFIX)).toThrow(ValidationError);
+    expect(() => validateFileIssueRequest({ ...VALID, body: "x".repeat(5000) }, TOOLCHAIN_PREFIX)).toThrow(
+      ValidationError,
+    );
+  });
+
+  it("rejects an empty labels array", () => {
+    expect(() => validateFileIssueRequest({ ...VALID, labels: [] }, TOOLCHAIN_PREFIX)).toThrow(ValidationError);
+  });
+
+  it("rejects a label outside the standard set -- mutation guard: allow any string and this fails", () => {
+    expect(() =>
+      validateFileIssueRequest({ ...VALID, labels: ["chore", "arbitrary-label"] }, TOOLCHAIN_PREFIX),
+    ).toThrow(ValidationError);
+  });
+
+  it("rejects a non-object payload (array, null, primitive)", () => {
+    expect(() => validateFileIssueRequest(null, TOOLCHAIN_PREFIX)).toThrow(ValidationError);
+    expect(() => validateFileIssueRequest([VALID], TOOLCHAIN_PREFIX)).toThrow(ValidationError);
+    expect(() => validateFileIssueRequest("not an object", TOOLCHAIN_PREFIX)).toThrow(ValidationError);
+  });
+});
+
+describe("assertRepoAllowed", () => {
+  it("allows an exact match", () => {
+    expect(() => assertRepoAllowed("<OWNER>/<REPO>", ["<OWNER>/<REPO>", "<OWNER>/<OTHER_REPO>"])).not.toThrow();
+  });
+
+  it("rejects a repo not in the allowlist -- mutation guard: remove the repo allowlist check and the Worker's 403 test fails", () => {
+    expect(() => assertRepoAllowed("some-other/repo", ["<OWNER>/<REPO>"])).toThrow(RepoNotAllowedError);
+  });
+
+  it("never treats a prefix/substring match as allowed", () => {
+    expect(() => assertRepoAllowed("<OWNER>/<REPO>-fork", ["<OWNER>/<REPO>"])).toThrow(RepoNotAllowedError);
+  });
+
+  it("rejects everything when the allowlist is empty -- fail closed, not open", () => {
+    expect(() => assertRepoAllowed("<OWNER>/<REPO>", [])).toThrow(RepoNotAllowedError);
+  });
+});
+
+describe("parseCsvEnv", () => {
+  it("splits, trims, and drops empty entries", () => {
+    expect(parseCsvEnv("<OWNER>/<REPO>, <OWNER>/<OTHER_REPO> ,")).toEqual([
+      "<OWNER>/<REPO>",
+      "<OWNER>/<OTHER_REPO>",
+    ]);
+  });
+
+  it("parses undefined/empty as an empty array, not a crash", () => {
+    expect(parseCsvEnv(undefined)).toEqual([]);
+    expect(parseCsvEnv("")).toEqual([]);
+  });
+});

@@ -1,0 +1,36 @@
+import js from "@eslint/js";
+import globals from "globals";
+import tseslint from "typescript-eslint";
+import prettier from "eslint-config-prettier";
+
+// Flat config for the Worker, separate from the site's own eslint.config.js one level up:
+// this package runs in the Workers runtime (no DOM), not a browser, and carries no
+// react-hooks plugin -- there's no React here.
+export default tseslint.config(
+  { ignores: ["dist", "node_modules", ".wrangler"] },
+
+  js.configs.recommended,
+  tseslint.configs.recommended,
+
+  {
+    files: ["src/**/*.ts", "test/**/*.ts"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "module",
+      globals: { ...globals.worker, ...globals.es2021 },
+    },
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
+      ],
+    },
+  },
+
+  {
+    files: ["*.{js,ts}"],
+    languageOptions: { globals: globals.node },
+  },
+
+  prettier,
+);

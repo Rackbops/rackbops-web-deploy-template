@@ -25,6 +25,15 @@ still resolve by GitHub's owner redirect, but `Rackbops/...` is canonical.)
   summarised in the server README's install section -- not re-derived here.
   Its own bring-up runbook (`DEPLOY.md` steps 1a/1b) is the source for the pull-model clone +
   deploy-key block in the nginx-static README.
+- **`Rackbops/Tooling` `tools-site/worker/`** (`Tooling#638`, given back as `Tooling#661`) --
+  source of `workers/file-issue/`: an Access-gated Cloudflare Worker filing/finding a GitHub
+  issue in one click. Not an origin server behind the loopback + tunnel gate at all (no loopback
+  bind, no tunnel ingress) -- it adds an edge route onto a hostname an app already has gated,
+  which is why `workers/` is its own top-level tier, not a `servers/<name>/` entry. Its
+  `Sec-Fetch-Site` same-origin check and the `github.ts` GitHub-error-wrapping were both
+  adversarially reviewed on the source repo (two review rounds each); its repo-generic design
+  (`ALLOWED_REPOS`/`ALLOWED_TITLE_PREFIXES` as Worker vars, never hardcoded) is what makes this
+  a real, non-Tooling-specific shape.
 - **`Rackbops/Tooling` `docs/*-remote-access.md`** (private) -- source of `gate/README.md`. The
   Cloudflare Access + tunnel + DNS flow was proven **identical across two origins** in
   `Tooling#282` (one multi-domain Access app fronting a loopback nginx origin), which is the
@@ -109,6 +118,15 @@ above (the sibling `../styles` import), so it is no longer inferred-only: the kn
 deployment. That consumer's gate differs from this repo's shared `gate/`, so it does NOT prove the
 *shared* gate end-to-end -- that caveat (top of this section) still stands; only the web-root knob
 is what it confirms.
+
+**`workers/file-issue/` has one consumer so far, and it doesn't fit the table above.** The table's
+columns (`Base server` / gate-style `Publish`) describe the `gate/` + `servers/<name>/` model; a
+Worker has neither a base server nor a loopback origin to publish onto, so it gets its own line
+instead of a forced-fit row: `Rackbops/Tooling`'s `tools-site/worker/`, live on
+`tools.rackbops.com`/`tools.owhee.com` (`Tooling#638`, given back as `Tooling#661`). **Source.**
+Live on its own deployed Worker; `workers/file-issue/` is the genericized `.example` extraction from
+it. `tools-site/README.md` records which of the two copies is canonical and which direction fixes
+flow.
 
 ## Open questions
 

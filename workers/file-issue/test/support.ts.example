@@ -1,0 +1,54 @@
+/** Shared test fixtures: a throwaway RSA keypair standing in for Cloudflare Access's own
+ * signing key, and a `signToken` helper for constructing test Access JWTs. Matches the fake
+ * bindings in `../vitest.config.ts` (`ACCESS_TEAM_DOMAIN`/`ACCESS_AUD`).
+ *
+ * EVERY fixture gets its OWN unique `kid` (a counter, not a per-fixture-generated random value --
+ * deterministic is easier to reason about in a failure message). This matters more than it looks:
+ * `accessJwt.ts`'s JWKS cache is keyed by team domain and shared across every test that verifies
+ * against the SAME `TEAM_DOMAIN` constant below. `jose`'s `createRemoteJWKSet` only re-fetches
+ * the JWKS when it can't find a key matching the token's `kid` in what it already cached -- so a
+ * REUSED `kid` across two fixtures (an earlier version of this file hardcoded one) would make a
+ * later test silently verify against an EARLIER test's stale (wrong) key: `jose` reports a
+ * signature mismatch instead of ever re-fetching, and a test asserting "rejects" (wrong audience,
+ * wrong issuer, expired) would pass for a completely different reason than the one it names --
+ * it would keep passing even if the actual aud/iss/exp check it claims to guard were deleted.
+ * Caught live: running these tests in isolation passed, running the full suite produced 401s
+ * downstream in index.test.ts once a prior test's fixture had already populated the cache. */
+import { SignJWT, exportJWK, generateKeyPair } from "jose";
+
+export const TEAM_DOMAIN = "test-team.cloudflareaccess.com";
+export const AUD = "test-aud-value";
+
+let kidCounter = 0;
+
+export interface AccessFixture {
+  jwksResponseBody: string;
+  signToken: (overrides?: { aud?: string; iss?: string; expiresIn?: string }) => Promise<string>;
+}
+
+export async function makeAccessFixture(): Promise<AccessFixture> {
+  const kid = `test-key-${++kidCounter}`;
+  const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
+  const jwk = await exportJWK(publicKey);
+  jwk.kid = kid;
+  jwk.alg = "RS256";
+  jwk.use = "sig";
+
+  const jwksResponseBody = JSON.stringify({ keys: [jwk] });
+
+  async function signToken(overrides: { aud?: string; iss?: string; expiresIn?: string } = {}): Promise<string> {
+    return new SignJWT({})
+      .setProtectedHeader({ alg: "RS256", kid })
+      .setIssuedAt()
+      .setIssuer(overrides.iss ?? `https://${TEAM_DOMAIN}`)
+      .setAudience(overrides.aud ?? AUD)
+      .setExpirationTime(overrides.expiresIn ?? "5m")
+      .sign(privateKey);
+  }
+
+  return { jwksResponseBody, signToken };
+}
+
+export function certsUrl(teamDomain: string = TEAM_DOMAIN): string {
+  return `https://${teamDomain}/cdn-cgi/access/certs`;
+}

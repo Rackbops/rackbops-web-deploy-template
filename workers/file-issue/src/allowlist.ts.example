@@ -1,0 +1,113 @@
+/**
+ * Input allowlist for `POST /api/file-issue` (<OWNER>/<REPO>#638, TC-8): a request must look
+ * exactly like an allowed action filing, never an arbitrary issue an authenticated-but-untrusted
+ * caller could use this Worker to create in an arbitrary repo.
+ *
+ * REPO-GENERIC BY DESIGN (<MAINTAINER> amendment, 2026-09-12): this Worker is not Tooling-only -- the
+ * request itself names its target `repo`, checked against the server-side `ALLOWED_REPOS` Worker
+ * var (never trusted from the client). `ALLOWED_TITLE_PREFIXES` is likewise a Worker var, applied
+ * to every allowed repo alike; this epic's own tools-site page only ever sends `<OWNER>/<REPO>`
+ * + `<TITLE_PREFIX>`, but the Worker itself makes no such assumption.
+ *
+ * `ALLOWED_LABELS` is read from the repo-root `labels.json` -- the org-wide label standard
+ * (<OWNER>/<REPO>#107/#149) `sync_labels.py` applies everywhere -- rather than a second,
+ * hand-maintained copy: this is a REUSE of that existing single source of truth, not a new
+ * duplicate list to keep in sync by hand. Only `type` + `priority` names are pulled in
+ * (`effort:` labels don't apply to an auto-filed action). This part stays Tooling-specific
+ * (labels.json's own taxonomy is a <OWNER>/<REPO> standard) -- a future non-Tooling caller
+ * inherits it too for now; revisit if a repo outside that standard ever needs its own labels.
+ */
+import labelsStandard from "../../../labels.json";
+
+export class ValidationError extends Error {}
+
+/** Thrown by {@link assertRepoAllowed} -- always a 403, distinct from a {@link ValidationError}
+ * (400): the request is well-FORMED, just not something this Worker is configured to act on. */
+export class RepoNotAllowedError extends Error {}
+
+export interface FileIssueRequest {
+  repo: string;
+  title: string;
+  body: string;
+  labels: string[];
+}
+
+const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
+
+interface LabelEntry {
+  name: string;
+}
+
+interface LabelsStandard {
+  type: LabelEntry[];
+  priority: LabelEntry[];
+}
+
+const ALLOWED_LABELS: ReadonlySet<string> = new Set(
+  [...(labelsStandard as LabelsStandard).type, ...(labelsStandard as LabelsStandard).priority].map((l) => l.name),
+);
+
+const MAX_BODY_LENGTH = 4000;
+// GitHub itself caps an issue title at 256 characters; enforcing the same ceiling here means a
+// too-long title is refused with this Worker's own clear 400, not GitHub's own less legible
+// validation error surfacing as a confusing 502 later.
+const MAX_TITLE_LENGTH = 256;
+
+/** Splits a Worker var's comma-separated value into trimmed, non-empty entries. An unset/empty
+ * var parses to `[]` -- FAIL CLOSED: `assertRepoAllowed`/the title-prefix check in
+ * {@link validateFileIssueRequest} then reject every request rather than silently allowing
+ * everything when a var is missing. */
+export function parseCsvEnv(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/** Validates `payload` (already-parsed JSON) into a {@link FileIssueRequest}, or throws
+ * {@link ValidationError} naming the first thing wrong. Every field is checked -- a malformed
+ * `repo`, an empty/oversized `body`, an empty `labels` array, or a label outside the standard
+ * set is refused just as firmly as a bad title. Does NOT check `repo` against the allowlist --
+ * that's {@link assertRepoAllowed}'s job (a 403, not a 400: the request is well-formed, just not
+ * permitted), called separately so the two failure modes stay distinguishable. */
+export function validateFileIssueRequest(payload: unknown, allowedTitlePrefixes: readonly string[]): FileIssueRequest {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new ValidationError("request body must be a JSON object");
+  }
+  const { repo, title, body, labels } = payload as Record<string, unknown>;
+
+  if (typeof repo !== "string" || !REPO_RE.test(repo)) {
+    throw new ValidationError('"repo" must be a string of the form "owner/name"');
+  }
+  if (typeof title !== "string" || !allowedTitlePrefixes.some((prefix) => title.startsWith(prefix))) {
+    throw new ValidationError(
+      allowedTitlePrefixes.length > 0
+        ? `"title" must start with one of: ${allowedTitlePrefixes.join(", ")}`
+        : '"title" is not allowed (ALLOWED_TITLE_PREFIXES is empty -- this Worker is configured to accept nothing)',
+    );
+  }
+  if (typeof title === "string" && title.length > MAX_TITLE_LENGTH) {
+    throw new ValidationError(`"title" must be at most ${MAX_TITLE_LENGTH} characters`);
+  }
+  if (typeof body !== "string" || body.length === 0 || body.length > MAX_BODY_LENGTH) {
+    throw new ValidationError(`"body" must be a non-empty string of at most ${MAX_BODY_LENGTH} characters`);
+  }
+  if (!Array.isArray(labels) || labels.length === 0) {
+    throw new ValidationError('"labels" must be a non-empty array');
+  }
+  for (const label of labels) {
+    if (typeof label !== "string" || !ALLOWED_LABELS.has(label)) {
+      throw new ValidationError(`label ${JSON.stringify(label)} is not in the standard label set`);
+    }
+  }
+
+  return { repo, title, body, labels: labels as string[] };
+}
+
+/** Throws {@link RepoNotAllowedError} unless `repo` is exactly one of `allowedRepos` -- never a
+ * prefix/substring match, so `<OWNER>/<REPO>-fork` can't be mistaken for `<OWNER>/<REPO>`. */
+export function assertRepoAllowed(repo: string, allowedRepos: readonly string[]): void {
+  if (!allowedRepos.includes(repo)) {
+    throw new RepoNotAllowedError(`repo ${JSON.stringify(repo)} is not in this Worker's allowed set`);
+  }
+}
