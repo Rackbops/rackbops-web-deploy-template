@@ -1,0 +1,307 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { env as rawEnv, createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
+import worker, { type Env } from "../src/index";
+import { _resetJwksCacheForTests } from "../src/accessJwt";
+import { certsUrl, makeAccessFixture } from "./support";
+
+// `cloudflare:test`'s `env` merges wrangler.toml's real committed `[vars]`/routes with
+// vitest.config.ts's `miniflare.bindings` fixture values (GITHUB_TOKEN, GITHUB_CONTENTS_TOKEN,
+// ACCESS_TEAM_DOMAIN, ACCESS_AUD) -- see index.test.ts's identical comment.
+const env = rawEnv as unknown as Env;
+
+const STORE_CONTENTS_API = "https://api.github.com/repos/<OWNER>/<STORE_REPO>/contents/<STORE_DIR>?ref=main";
+const EXAMPLE_HOST_SIDECAR_API =
+  "https://api.github.com/repos/<OWNER>/<STORE_REPO>/contents/<STORE_DIR>/toolchain-inventory-example-host.json?ref=main";
+const STANDARD_API = "https://api.github.com/repos/<STANDARD_REPO>/contents/<STANDARD_PATH>?ref=main";
+const SEARCH_API_PREFIX = "https://api.github.com/search/issues";
+
+function req(path: string, init: RequestInit = {}): Request {
+  return new Request(`https://<HOSTNAME_1>${path}`, init);
+}
+
+function authedReq(path: string, token: string): Request {
+  return req(path, { headers: { "Cf-Access-Jwt-Assertion": token } });
+}
+
+/** Stubs `fetch` to answer the Access JWKS endpoint plus whatever GitHub endpoints `handlers`
+ * names; anything else 500s with a message identifying it, so an unexpected call fails loudly
+ * rather than silently returning `undefined`-shaped JSON. Every call to a GitHub endpoint is
+ * recorded (url + the request's headers) so tests can assert on call counts and on exactly what
+ * was sent upstream (e.g. the Authorization header) without that ever needing to reach the
+ * client-facing response. */
+function stubFetch(
+  jwksResponseBody: string,
+  handlers: Record<string, () => Response>,
+): { calls: { url: string; headers: Headers }[] } {
+  const calls: { url: string; headers: Headers }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === certsUrl()) return new Response(jwksResponseBody, { status: 200 });
+      const handler = handlers[url];
+      if (handler) {
+        calls.push({ url, headers: new Headers(init?.headers) });
+        return handler();
+      }
+      return new Response("unexpected fetch in this test: " + url, { status: 500 });
+    }),
+  );
+  return { calls };
+}
+
+// Every canonical route URL this test file exercises -- cleared from `caches.default` before
+// each test (see beforeEach below). `caches.default` is NOT isolated per test the way KV/D1
+// storage is under vitest-pool-workers: a 200 cached by one test genuinely bleeds into a LATER
+// test hitting the same URL with a different mock, which is exactly the failure mode the
+// cache-window test itself exists to prove doesn't happen for an unauthenticated caller (JWT
+// before cache) -- it must not happen between unrelated TESTS either.
+const ALL_ROUTE_URLS = [
+  "https://<HOSTNAME_1>/api/<FEATURE>/manifest",
+  "https://<HOSTNAME_1>/api/<FEATURE>/sidecar/example-host",
+  "https://<HOSTNAME_1>/api/<FEATURE>/filed",
+  "https://<HOSTNAME_1>/api/<FEATURE>/standard",
+];
+
+describe("Worker GET /api/<FEATURE>/* read routes (#680)", () => {
+  beforeEach(async () => {
+    // See accessJwt.ts's _resetJwksCacheForTests docstring (index.test.ts uses the same pattern):
+    // without this, jose's remote-JWKS cooldown makes every JWT-dependent test after the first
+    // fail with a spurious 401.
+    _resetJwksCacheForTests();
+    const cache = caches.default;
+    for (const url of ALL_ROUTE_URLS) {
+      await cache.delete(new Request(url));
+    }
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("401s without a JWT on every GET route -- mutation guard: skip the JWT check and this fails", async () => {
+    for (const path of [
+      "/api/<FEATURE>/manifest",
+      "/api/<FEATURE>/sidecar/example-host",
+      "/api/<FEATURE>/filed",
+      "/api/<FEATURE>/standard",
+    ]) {
+      const ctx = createExecutionContext();
+      const res = await worker.fetch(req(path), env, ctx);
+      await waitOnExecutionContext(ctx);
+      expect(res.status, path).toBe(401);
+    }
+  });
+
+  it("404s a path under /api/<FEATURE>/ that isn't one of the four routes", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    stubFetch(jwksResponseBody, {});
+    const token = await signToken();
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(authedReq("/api/<FEATURE>/other", token), env, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(404);
+  });
+
+  it("404s traversal and over-long host shapes for sidecar/<host>, and makes no GitHub call -- mutation guard: remove HOST_RE and this fails", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    const { calls } = stubFetch(jwksResponseBody, {});
+    const token = await signToken();
+
+    // `sidecar/../x`: the WHATWG URL parser normalizes the `..` dot-segment during basic URL
+    // parsing, before this Worker ever sees the path -- it never even reaches the "sidecar/"
+    // dispatch branch. Included anyway because it's still a real shape a client could send, and
+    // the outcome (404, no GitHub call) must hold regardless of which layer catches it.
+    for (const path of [
+      "/api/<FEATURE>/sidecar/..%2f..",
+      "/api/<FEATURE>/sidecar/../x",
+      "/api/<FEATURE>/sidecar/a/b",
+      `/api/<FEATURE>/sidecar/${"a".repeat(33)}`,
+    ]) {
+      const ctx = createExecutionContext();
+      const res = await worker.fetch(authedReq(path, token), env, ctx);
+      await waitOnExecutionContext(ctx);
+      expect(res.status, path).toBe(404);
+    }
+    expect(calls).toEqual([]);
+  });
+
+  it("sidecar/example-host passes the raw store file through byte-for-byte, hitting the exact expected path", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    const raw = '{"schemaVersion":1,"host":"example-host","hostname":"example-host.local"}';
+    const { calls } = stubFetch(jwksResponseBody, {
+      [EXAMPLE_HOST_SIDECAR_API]: () => new Response(raw, { status: 200 }),
+    });
+    const token = await signToken();
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(authedReq("/api/<FEATURE>/sidecar/example-host", token), env, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(raw);
+    expect(calls.map((c) => c.url)).toEqual([EXAMPLE_HOST_SIDECAR_API]);
+    expect(calls[0]?.headers.get("Accept")).toBe("application/vnd.github.raw+json");
+  });
+
+  it("manifest lists only sidecar-shaped files, sorted by host, schema 2", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    const listing = [
+      { name: "toolchain-inventory-host-b.json" },
+      { name: "toolchain-inventory-host-a.json" },
+      { name: "toolchain-inventory-host-a.md" }, // the report's own .md twin -- not a sidecar
+      { name: "<STANDARD_PATH>" }, // an unrelated file that happens to live nearby
+    ];
+    stubFetch(jwksResponseBody, {
+      [STORE_CONTENTS_API]: () => new Response(JSON.stringify(listing), { status: 200 }),
+    });
+    const token = await signToken();
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(authedReq("/api/<FEATURE>/manifest", token), env, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { schemaVersion: number; hosts: { host: string; file: string }[] };
+    expect(body.schemaVersion).toBe(2);
+    expect(body.hosts).toEqual([
+      { host: "host-a", file: "toolchain-inventory-host-a.json" },
+      { host: "host-b", file: "toolchain-inventory-host-b.json" },
+    ]);
+  });
+
+  it("filed maps search results to {number,title,url}", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    stubFetch(jwksResponseBody, {
+      [`${SEARCH_API_PREFIX}?q=${encodeURIComponent('repo:<STANDARD_REPO> is:issue is:open "<TITLE_PREFIX>" in:title')}&per_page=100`]:
+        () =>
+          new Response(
+            JSON.stringify({
+              items: [{ number: 670, title: "<TITLE_PREFIX>upgrade Cargo on example-host to 1.98.1", html_url: "https://github.com/<STANDARD_REPO>/issues/670" }],
+            }),
+            { status: 200 },
+          ),
+    });
+    const token = await signToken();
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(authedReq("/api/<FEATURE>/filed", token), env, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      schemaVersion: 1,
+      generated: expect.any(String),
+      issues: [{ number: 670, title: "<TITLE_PREFIX>upgrade Cargo on example-host to 1.98.1", url: "https://github.com/<STANDARD_REPO>/issues/670" }],
+    });
+  });
+
+  it("filed returns issues:null (never a 502) on a GitHub 5xx -- mutation guard: map this to issues:[] and this fails", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    stubFetch(jwksResponseBody, {
+      [`${SEARCH_API_PREFIX}?q=${encodeURIComponent('repo:<STANDARD_REPO> is:issue is:open "<TITLE_PREFIX>" in:title')}&per_page=100`]:
+        () => new Response(JSON.stringify({ message: "API rate limit exceeded" }), { status: 403 }),
+    });
+    const token = await signToken();
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(authedReq("/api/<FEATURE>/filed", token), env, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { issues: unknown };
+    expect(body.issues).toBeNull();
+  });
+
+  it("standard passes the raw file through byte-for-byte", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    const raw = '{"hosts":{},"tools":{}}';
+    stubFetch(jwksResponseBody, {
+      [STANDARD_API]: () => new Response(raw, { status: 200 }),
+    });
+    const token = await signToken();
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(authedReq("/api/<FEATURE>/standard", token), env, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(raw);
+  });
+
+  it("standard 502s (with no upstream body leaked) on a GitHub 404", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    stubFetch(jwksResponseBody, {
+      [STANDARD_API]: () => new Response(JSON.stringify({ message: "Not Found", documentation_url: "https://docs.github.com/secret-internal-hint" }), { status: 404 }),
+    });
+    const token = await signToken();
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(authedReq("/api/<FEATURE>/standard", token), env, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(502);
+    const text = await res.text();
+    expect(text).toBe(JSON.stringify({ error: "upstream" }));
+    expect(text).not.toContain("Not Found");
+    expect(text).not.toContain("documentation_url");
+  });
+
+  it("a second call within the cache window does not hit GitHub again -- mutation guard: put before verify and this fails", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    const { calls } = stubFetch(jwksResponseBody, {
+      [STANDARD_API]: () => new Response('{"ok":true}', { status: 200 }),
+    });
+    const token = await signToken();
+
+    const ctx1 = createExecutionContext();
+    const res1 = await worker.fetch(authedReq("/api/<FEATURE>/standard", token), env, ctx1);
+    await waitOnExecutionContext(ctx1);
+    expect(res1.status).toBe(200);
+
+    const ctx2 = createExecutionContext();
+    const res2 = await worker.fetch(authedReq("/api/<FEATURE>/standard", token), env, ctx2);
+    await waitOnExecutionContext(ctx2);
+    expect(res2.status).toBe(200);
+    expect(await res2.text()).toBe('{"ok":true}');
+
+    expect(calls.length).toBe(1);
+    expect(res1.headers.get("Cache-Control")).toBe("max-age=60");
+  });
+
+  it("a JWT-less call after a cached 200 still gets 401 -- JWT is checked before the cache is ever consulted", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    stubFetch(jwksResponseBody, {
+      [STANDARD_API]: () => new Response('{"ok":true}', { status: 200 }),
+    });
+    const token = await signToken();
+
+    const primeCtx = createExecutionContext();
+    const primed = await worker.fetch(authedReq("/api/<FEATURE>/standard", token), env, primeCtx);
+    await waitOnExecutionContext(primeCtx);
+    expect(primed.status).toBe(200);
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(req("/api/<FEATURE>/standard"), env, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(401);
+  });
+
+  it("the contents token is sent upstream but never appears in the response", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    const { calls } = stubFetch(jwksResponseBody, {
+      [STANDARD_API]: () => new Response('{"ok":true}', { status: 200 }),
+    });
+    const token = await signToken();
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(authedReq("/api/<FEATURE>/standard", token), env, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(calls[0]?.headers.get("Authorization")).toBe(`Bearer ${env.GITHUB_CONTENTS_TOKEN}`);
+    expect(res.headers.get("Authorization")).toBeNull();
+    const text = await res.text();
+    expect(text).not.toContain(env.GITHUB_CONTENTS_TOKEN);
+  });
+});

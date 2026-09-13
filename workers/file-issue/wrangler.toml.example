@@ -10,6 +10,10 @@ compatibility_date = "2026-08-22"
 routes = [
   { pattern = "<HOSTNAME_1>/api/file-issue", zone_name = "<ZONE_1>" },
   { pattern = "<HOSTNAME_2>/api/file-issue", zone_name = "<ZONE_2>" },
+  # Epic #667, E2/C1: GET /api/<FEATURE>/{manifest,sidecar/<host>,filed,standard} -- read routes
+  # over the store repo + the standard repo, behind the same Access app.
+  { pattern = "<HOSTNAME_1>/api/<FEATURE>/*", zone_name = "<ZONE_1>" },
+  { pattern = "<HOSTNAME_2>/api/<FEATURE>/*", zone_name = "<ZONE_2>" },
 ]
 
 # Repo-generic by design (<MAINTAINER> amendment, 2026-09-12): this Worker is not Tooling-only, so
