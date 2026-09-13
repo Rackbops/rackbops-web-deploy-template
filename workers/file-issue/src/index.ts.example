@@ -22,7 +22,9 @@
  */
 import { ACCESS_JWT_HEADER, AccessError, verifyAccessJwt } from "./accessJwt";
 import { RepoNotAllowedError, ValidationError, assertRepoAllowed, parseCsvEnv, validateFileIssueRequest } from "./allowlist";
-import { createIssue, findExistingIssue, GitHubError } from "./github";
+import { createIssue, findExistingIssue, getContentsListing, getRawFile, searchOpenIssues, GitHubError } from "./github";
+import { buildManifest, filedFromSearch, sidecarPath, FILED_TITLE_PREFIX, STANDARD_PATH, STANDARD_REPO, STORE_DIR, STORE_REPO } from "./toolchain";
+import type { FiledSnapshot } from "./toolchain";
 
 export interface Env {
   GITHUB_TOKEN: string;
@@ -36,78 +38,208 @@ export interface Env {
   /** Comma-separated title-prefix list, applied to every repo in `ALLOWED_REPOS` alike. Also a
    * committed `[vars]` entry. */
   ALLOWED_TITLE_PREFIXES: string;
+  /** Epic #667, E2/C1: a SECOND fine-grained PAT, Contents: read only, on `<OWNER>/<STORE_REPO>`
+   * + `<STANDARD_REPO>` (both private) -- deliberately separate from GITHUB_TOKEN's Issues R/W
+   * scope, so a compromise of either token can't do the other's job. A Worker secret (`wrangler
+   * secret put`), never committed, never logged. */
+  GITHUB_CONTENTS_TOKEN: string;
 }
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
+async function handleFileIssue(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response(JSON.stringify({ error: "method not allowed" }), {
+      status: 405,
+      headers: { "content-type": "application/json", Allow: "POST" },
+    });
+  }
+
+  // Fetch Metadata: a browser sets this itself and a page's own JS cannot override it, so
+  // it's a reliable signal a request did NOT originate from this same site -- reject before
+  // even checking the JWT (a cross-site request is refused regardless of what cookie/header
+  // it happens to carry). Missing entirely (a non-browser client, or a browser old enough not
+  // to send Fetch Metadata) fails closed too: the one legitimate caller is always this site's
+  // own same-origin fetch().
+  if (request.headers.get("Sec-Fetch-Site") !== "same-origin") {
+    return json(403, { error: "cross-site requests are not allowed" });
+  }
+
+  try {
+    await verifyAccessJwt(request.headers.get(ACCESS_JWT_HEADER), env.ACCESS_TEAM_DOMAIN, env.ACCESS_AUD);
+  } catch (err) {
+    if (err instanceof AccessError) return json(401, { error: err.message });
+    throw err;
+  }
+
+  let payload: unknown;
+  try {
+    payload = await request.json();
+  } catch {
+    return json(400, { error: "request body must be valid JSON" });
+  }
+
+  let validated;
+  try {
+    validated = validateFileIssueRequest(payload, parseCsvEnv(env.ALLOWED_TITLE_PREFIXES));
+  } catch (err) {
+    if (err instanceof ValidationError) return json(400, { error: err.message });
+    throw err;
+  }
+
+  // A well-formed request naming a repo this Worker isn't configured for is refused with its
+  // own status (403, never 400): the shape is fine, the target just isn't permitted -- and
+  // this check runs BEFORE any GitHub call, so a disallowed repo can never even reach the
+  // dedupe search, let alone create anything.
+  try {
+    assertRepoAllowed(validated.repo, parseCsvEnv(env.ALLOWED_REPOS));
+  } catch (err) {
+    if (err instanceof RepoNotAllowedError) return json(403, { error: err.message });
+    throw err;
+  }
+
+  try {
+    const existing = await findExistingIssue(validated.repo, validated.title, env.GITHUB_TOKEN);
+    if (existing) {
+      return json(200, { number: existing.number, url: existing.url, existing: true });
+    }
+    const created = await createIssue(validated.repo, validated, env.GITHUB_TOKEN);
+    return json(201, { number: created.number, url: created.url });
+  } catch (err) {
+    if (err instanceof GitHubError) return json(502, { error: err.message });
+    throw err;
+  }
+}
+
+const TOOLCHAIN_PREFIX = "/api/<FEATURE>/";
+const SIDECAR_SUBPATH_PREFIX = "sidecar/";
+
+interface RouteResult {
+  response: Response;
+  /** Whether `response` should be written into `caches.default`. `false` for every non-2xx
+   * response AND for `filed`'s degraded-but-200 `issues: null` shape -- a status check alone
+   * isn't enough to decide this, which is why each route builder returns it explicitly rather
+   * than the caller inferring it from `response.status`. */
+  cacheable: boolean;
+}
+
+async function buildManifestResult(env: Env, generated: string): Promise<RouteResult> {
+  try {
+    const entries = await getContentsListing(STORE_REPO, STORE_DIR, env.GITHUB_CONTENTS_TOKEN);
+    return { response: json(200, buildManifest(entries, generated)), cacheable: true };
+  } catch (err) {
+    if (err instanceof GitHubError) return { response: json(502, { error: "upstream" }), cacheable: false };
+    throw err;
+  }
+}
+
+async function buildSidecarResult(env: Env, host: string): Promise<RouteResult> {
+  const path = sidecarPath(host);
+  if (!path) return { response: json(404, { error: "not found" }), cacheable: false };
+  try {
+    const raw = await getRawFile(STORE_REPO, path, env.GITHUB_CONTENTS_TOKEN);
+    return {
+      response: new Response(raw, { status: 200, headers: { "content-type": "application/json" } }),
+      cacheable: true,
+    };
+  } catch (err) {
+    if (err instanceof GitHubError) return { response: json(502, { error: "upstream" }), cacheable: false };
+    throw err;
+  }
+}
+
+async function buildFiledResult(env: Env, generated: string): Promise<RouteResult> {
+  try {
+    const items = await searchOpenIssues(STANDARD_REPO, FILED_TITLE_PREFIX, env.GITHUB_CONTENTS_TOKEN);
+    return { response: json(200, filedFromSearch(items, generated)), cacheable: true };
+  } catch (err) {
+    if (err instanceof GitHubError) {
+      // The page's own contract (issue.ts's FiledSnapshot): a failed lookup degrades to
+      // `issues: null` with a 200, never a 502 -- so the page's existing "show every file-issue
+      // button" fallback holds instead of the whole page erroring out over a transient GitHub
+      // hiccup. NOT cached: `cacheable: false` here (not inferred from the 200 status) is what
+      // keeps this degraded response from being served for the next 60s once a real search
+      // starts succeeding again.
+      const degraded: FiledSnapshot = { schemaVersion: 1, generated, issues: null };
+      return { response: json(200, degraded), cacheable: false };
+    }
+    throw err;
+  }
+}
+
+async function buildStandardResult(env: Env): Promise<RouteResult> {
+  try {
+    const raw = await getRawFile(STANDARD_REPO, STANDARD_PATH, env.GITHUB_CONTENTS_TOKEN);
+    return {
+      response: new Response(raw, { status: 200, headers: { "content-type": "application/json" } }),
+      cacheable: true,
+    };
+  } catch (err) {
+    if (err instanceof GitHubError) return { response: json(502, { error: "upstream" }), cacheable: false };
+    throw err;
+  }
+}
+
+/** `GET /api/<FEATURE>/{manifest,sidecar/<host>,filed,standard}` (Epic #667, E2/C1). Order,
+ * exactly, per request: route/method -> Access JWT verify (401, same as the POST route above) ->
+ * `caches.default` lookup -> upstream -> `Cache-Control: max-age=60` on a cacheable result ->
+ * `ctx.waitUntil(cache.put(...))`. JWT verification runs BEFORE the cache is ever consulted, so a
+ * request with no valid JWT gets 401 even when a fresh, valid cached response already exists for
+ * that URL -- the cache never becomes a way to read this data unauthenticated. */
+async function handleToolchainRead(request: Request, env: Env, ctx: ExecutionContext, url: URL): Promise<Response> {
+  if (request.method !== "GET") {
+    return new Response(JSON.stringify({ error: "method not allowed" }), {
+      status: 405,
+      headers: { "content-type": "application/json", Allow: "GET" },
+    });
+  }
+
+  try {
+    await verifyAccessJwt(request.headers.get(ACCESS_JWT_HEADER), env.ACCESS_TEAM_DOMAIN, env.ACCESS_AUD);
+  } catch (err) {
+    if (err instanceof AccessError) return json(401, { error: err.message });
+    throw err;
+  }
+
+  const cache = caches.default;
+  const cached = await cache.match(request);
+  if (cached) return cached;
+
+  const subpath = url.pathname.slice(TOOLCHAIN_PREFIX.length);
+  const generated = new Date().toISOString();
+
+  let result: RouteResult;
+  if (subpath === "manifest") {
+    result = await buildManifestResult(env, generated);
+  } else if (subpath.startsWith(SIDECAR_SUBPATH_PREFIX)) {
+    result = await buildSidecarResult(env, subpath.slice(SIDECAR_SUBPATH_PREFIX.length));
+  } else if (subpath === "filed") {
+    result = await buildFiledResult(env, generated);
+  } else if (subpath === "standard") {
+    result = await buildStandardResult(env);
+  } else {
+    return json(404, { error: "not found" });
+  }
+
+  if (!result.cacheable) return result.response;
+
+  const cacheableResponse = new Response(result.response.body, result.response);
+  cacheableResponse.headers.set("Cache-Control", "max-age=60");
+  ctx.waitUntil(cache.put(request, cacheableResponse.clone()));
+  return cacheableResponse;
+}
+
 export default {
-  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname !== "/api/file-issue") {
-      return json(404, { error: "not found" });
+    if (url.pathname === "/api/file-issue") {
+      return handleFileIssue(request, env);
     }
-    if (request.method !== "POST") {
-      return new Response(JSON.stringify({ error: "method not allowed" }), {
-        status: 405,
-        headers: { "content-type": "application/json", Allow: "POST" },
-      });
+    if (url.pathname.startsWith(TOOLCHAIN_PREFIX)) {
+      return handleToolchainRead(request, env, ctx, url);
     }
-
-    // Fetch Metadata: a browser sets this itself and a page's own JS cannot override it, so
-    // it's a reliable signal a request did NOT originate from this same site -- reject before
-    // even checking the JWT (a cross-site request is refused regardless of what cookie/header
-    // it happens to carry). Missing entirely (a non-browser client, or a browser old enough not
-    // to send Fetch Metadata) fails closed too: the one legitimate caller is always this site's
-    // own same-origin fetch().
-    if (request.headers.get("Sec-Fetch-Site") !== "same-origin") {
-      return json(403, { error: "cross-site requests are not allowed" });
-    }
-
-    try {
-      await verifyAccessJwt(request.headers.get(ACCESS_JWT_HEADER), env.ACCESS_TEAM_DOMAIN, env.ACCESS_AUD);
-    } catch (err) {
-      if (err instanceof AccessError) return json(401, { error: err.message });
-      throw err;
-    }
-
-    let payload: unknown;
-    try {
-      payload = await request.json();
-    } catch {
-      return json(400, { error: "request body must be valid JSON" });
-    }
-
-    let validated;
-    try {
-      validated = validateFileIssueRequest(payload, parseCsvEnv(env.ALLOWED_TITLE_PREFIXES));
-    } catch (err) {
-      if (err instanceof ValidationError) return json(400, { error: err.message });
-      throw err;
-    }
-
-    // A well-formed request naming a repo this Worker isn't configured for is refused with its
-    // own status (403, never 400): the shape is fine, the target just isn't permitted -- and
-    // this check runs BEFORE any GitHub call, so a disallowed repo can never even reach the
-    // dedupe search, let alone create anything.
-    try {
-      assertRepoAllowed(validated.repo, parseCsvEnv(env.ALLOWED_REPOS));
-    } catch (err) {
-      if (err instanceof RepoNotAllowedError) return json(403, { error: err.message });
-      throw err;
-    }
-
-    try {
-      const existing = await findExistingIssue(validated.repo, validated.title, env.GITHUB_TOKEN);
-      if (existing) {
-        return json(200, { number: existing.number, url: existing.url, existing: true });
-      }
-      const created = await createIssue(validated.repo, validated, env.GITHUB_TOKEN);
-      return json(201, { number: created.number, url: created.url });
-    } catch (err) {
-      if (err instanceof GitHubError) return json(502, { error: err.message });
-      throw err;
-    }
+    return json(404, { error: "not found" });
   },
 } satisfies ExportedHandler<Env>;

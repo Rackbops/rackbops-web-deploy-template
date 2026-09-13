@@ -110,3 +110,80 @@ export async function createIssue(
     throw new GitHubError(`GitHub create failed: ${err instanceof Error ? err.message : String(err)}`, 0);
   }
 }
+
+// --- Toolchain read routes (Epic #667, E2/C1) -----------------------------------------------
+// The three calls below use GITHUB_CONTENTS_TOKEN (Contents: read on <OWNER>/<STORE_REPO>
+// + <STANDARD_REPO>, both private), a SEPARATE fine-grained PAT from GITHUB_TOKEN above (Issues
+// R/W on the ALLOWED_REPOS set) -- see README.md's token-hygiene section. Every failure here
+// becomes a GitHubError carrying only a status, never the upstream body: the caller maps that to
+// a fixed `{"error":"upstream"}` (or, for `filed` specifically, `issues: null`) rather than
+// echoing anything GitHub said, so a private repo's contents can never leak through an error
+// message.
+
+export interface ContentsEntry {
+  name: string;
+}
+
+/** Lists a directory via the GitHub Contents API. `dir` and `repo` are always this module's own
+ * constants (see `toolchain.ts`), never caller-supplied -- there is no path-traversal surface
+ * here at all, unlike `getRawFile` below. */
+export async function getContentsListing(repo: string, dir: string, token: string): Promise<ContentsEntry[]> {
+  try {
+    const res = await fetch(`${API}/repos/${repo}/contents/${dir}?ref=main`, { headers: headers(token) });
+    if (!res.ok) throw new GitHubError(`GitHub contents listing failed: ${await readError(res)}`, res.status);
+    const data = (await res.json()) as unknown;
+    if (!Array.isArray(data)) {
+      throw new GitHubError("GitHub contents listing returned an unexpected shape", res.status);
+    }
+    return data as ContentsEntry[];
+  } catch (err) {
+    if (err instanceof GitHubError) throw err;
+    throw new GitHubError(`GitHub contents listing failed: ${err instanceof Error ? err.message : String(err)}`, 0);
+  }
+}
+
+/** Fetches the raw bytes of exactly one file via the GitHub Contents API's raw media type --
+ * `Accept: application/vnd.github.raw+json` makes the response body the file's own bytes
+ * directly, not a base64-wrapped JSON envelope, so the caller can pass it straight through with
+ * no re-encoding step to get subtly wrong. `path` must already be one of the small set of paths
+ * `toolchain.ts` can produce ({@link sidecarPath} or the `STANDARD_PATH` constant) -- this
+ * function does no validation of its own, by design: it is not the security boundary, its
+ * caller's already-validated `path` is. */
+export async function getRawFile(repo: string, path: string, token: string): Promise<string> {
+  try {
+    const res = await fetch(`${API}/repos/${repo}/contents/${path}?ref=main`, {
+      headers: { ...headers(token), Accept: "application/vnd.github.raw+json" },
+    });
+    if (!res.ok) throw new GitHubError(`GitHub raw file fetch failed: ${await readError(res)}`, res.status);
+    return await res.text();
+  } catch (err) {
+    if (err instanceof GitHubError) throw err;
+    throw new GitHubError(`GitHub raw file fetch failed: ${err instanceof Error ? err.message : String(err)}`, 0);
+  }
+}
+
+export interface SearchIssueItem {
+  number: number;
+  title: string;
+  html_url: string;
+}
+
+/** Every OPEN issue in `repo` whose title contains `titlePrefix`. `per_page=100` for the same
+ * reason {@link findExistingIssue} uses it: a real match ranking outside the top handful on a
+ * busy repo must still be found. Throws {@link GitHubError} on any failure; the caller (not this
+ * function) decides that a filed-issues failure degrades to `issues: null` rather than a hard
+ * error. */
+export async function searchOpenIssues(repo: string, titlePrefix: string, token: string): Promise<SearchIssueItem[]> {
+  try {
+    const q = `repo:${repo} is:issue is:open "${titlePrefix}" in:title`;
+    const res = await fetch(`${API}/search/issues?q=${encodeURIComponent(q)}&per_page=100`, {
+      headers: headers(token),
+    });
+    if (!res.ok) throw new GitHubError(`GitHub search failed: ${await readError(res)}`, res.status);
+    const data = (await res.json()) as { items: SearchIssueItem[] };
+    return data.items;
+  } catch (err) {
+    if (err instanceof GitHubError) throw err;
+    throw new GitHubError(`GitHub search failed: ${err instanceof Error ? err.message : String(err)}`, 0);
+  }
+}

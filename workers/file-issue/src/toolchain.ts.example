@@ -1,0 +1,95 @@
+/**
+ * Pure helpers for the toolchain page's Worker read routes (Epic #667, E2/C1): building the
+ * manifest listing, forming the two allowed GitHub Contents paths, and shaping the filed-issues
+ * search result. No `fetch`, no env access -- kept unit-testable without any mock.
+ *
+ * TWO FIXED PATHS, NEVER A PROXY (the epic's own security decision, see README.md's "Read
+ * routes" section): a fine-grained PAT cannot be scoped to a single path, so the path allowlist
+ * here -- one directory listing, one filename pattern under it, one hardcoded standard file --
+ * IS the security boundary. Every function below either returns one of a small, enumerable set of
+ * paths, or refuses (`null`) outright; none of them ever echo an arbitrary caller-supplied path
+ * segment into a GitHub URL.
+ */
+
+/** A host name: alphanumeric plus `._-`, starting with an alphanumeric character, up to 32
+ * characters total. This is the ONLY gate `sidecarPath` forms a path through: a request whose
+ * host fails this regex never produces a GitHub path at all (404 before any fetch). */
+export const HOST_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
+
+/** Matches a store filename back to its host, used to build the manifest listing -- anything
+ * else in the directory (a `.md` twin, an unrelated file) is silently excluded, not an error. */
+export const SIDECAR_RE = /^toolchain-inventory-([A-Za-z0-9][A-Za-z0-9._-]{0,31})\.json$/;
+
+export const STORE_REPO = "<OWNER>/<STORE_REPO>";
+export const STORE_DIR = "<STORE_DIR>";
+export const STANDARD_REPO = "<STANDARD_REPO>";
+export const STANDARD_PATH = "<STANDARD_PATH>";
+
+/** The exact search-API title filter for filed toolchain issues -- matches
+ * `ALLOWED_TITLE_PREFIXES` in `wrangler.toml` (the `POST /api/file-issue` allowlist), so a page
+ * reading "what's already filed" and a page filing a new one agree on what a toolchain issue's
+ * title looks like. */
+export const FILED_TITLE_PREFIX = "<TITLE_PREFIX>";
+
+export interface ManifestHost {
+  host: string;
+  file: string;
+}
+
+export interface Manifest {
+  schemaVersion: 2;
+  generated: string;
+  hosts: ManifestHost[];
+}
+
+/** Builds the manifest from a raw GitHub Contents directory listing. Schema 2: no `pushed`, no
+ * per-host `generated` -- this is a listing and nothing more; the page reads each host's
+ * `generated` from its own sidecar (see README.md's "Read routes" section). Sorted by host so
+ * the page's rendering order is stable across requests regardless of the directory listing's own
+ * order. */
+export function buildManifest(entries: readonly { name: string }[], generated: string): Manifest {
+  const hosts: ManifestHost[] = [];
+  for (const entry of entries) {
+    const match = SIDECAR_RE.exec(entry.name);
+    const host = match?.[1];
+    if (host !== undefined) hosts.push({ host, file: entry.name });
+  }
+  hosts.sort((a, b) => a.host.localeCompare(b.host));
+  return { schemaVersion: 2, generated, hosts };
+}
+
+/** The exact, single Contents-API path for `host`'s sidecar, or `null` if `host` fails
+ * {@link HOST_RE} -- the ONLY way a `sidecar/<host>` request ever forms a GitHub path. Because
+ * the regex forbids both `/` and `..`, this function can only ever produce one of finitely many
+ * paths directly under {@link STORE_DIR}; it can never escape that directory. */
+export function sidecarPath(host: string): string | null {
+  if (!HOST_RE.test(host)) return null;
+  return `${STORE_DIR}/toolchain-inventory-${host}.json`;
+}
+
+export interface FiledIssueEntry {
+  number: number;
+  title: string;
+  url: string;
+}
+
+export interface FiledSnapshot {
+  schemaVersion: 1;
+  generated: string;
+  issues: FiledIssueEntry[] | null;
+}
+
+/** Shapes a successful GitHub search result into the page's `filed.json` contract. `issues: null`
+ * is a SEPARATE code path (the caller's, on an upstream failure), never produced here: a genuine
+ * empty result set from a successful search is `issues: []` -- "no toolchain issues open right
+ * now" is a real, different state from "we don't know because the search itself failed". */
+export function filedFromSearch(
+  items: readonly { number: number; title: string; html_url: string }[],
+  generated: string,
+): FiledSnapshot {
+  return {
+    schemaVersion: 1,
+    generated,
+    issues: items.map((i) => ({ number: i.number, title: i.title, url: i.html_url })),
+  };
+}
