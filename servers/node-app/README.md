@@ -190,8 +190,11 @@ block goes in — don't discover it for the first time in production, behind a l
 decision compares the **running container's** image against the tag's image, not a before/after
 snapshot of the tag alone -- so a recreate that itself fails (a daemon error, the unit's own
 timeout) is retried on the next run instead of being reported "unchanged" forever
-([#108](https://github.com/Rackbops/rackbops-web-deploy-template/issues/108)). Install the paired
-units once (box side):
+([#108](https://github.com/Rackbops/rackbops-web-deploy-template/issues/108)). Since #108, the
+timer also restarts a container that is merely **stopped** (a crash, or a deliberate `docker
+stop`) -- to keep a service down for maintenance, stop its timer first
+(`systemctl stop <app>-deploy.timer`) and start it again afterwards. Install the paired units
+once (box side):
 
 ```bash
 sudo cp publish/deploy-pull.service.example /etc/systemd/system/<app>-deploy.service
