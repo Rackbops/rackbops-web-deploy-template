@@ -8,8 +8,11 @@ behind the Cloudflare Access gate. Its distinctive parts vs `nginx-static`:
   the sidecar — that no-port bind is the security floor; Access is the door.
 - **A restart-on-update story.** nginx re-reads files per request, so it never swaps a container; a
   process must reload code, so a new image means a new container. `publish/deploy-pull.sh` does the
-  swap: `docker login` → `docker compose pull` → recreate **only when the image digest moved**. The
-  app **never pulls itself** (design §10's 53k-crash-loop lesson) — an external one-shot timer does.
+  swap: `docker login` → `docker compose pull` → recreate **only when the running container isn't
+  already on the tag's image** ([#108](https://github.com/Rackbops/rackbops-web-deploy-template/issues/108):
+  not "only when the digest moved" — a recreate that itself failed leaves that mismatch in place, so
+  the next poll retries it even though the tag's own digest hasn't changed since). The app **never
+  pulls itself** (design §10's 53k-crash-loop lesson) — an external one-shot timer does.
 
 **Reference consumer: `artifact-console`** — image `ghcr.io/rackbops/artifact-console` (private),
 container port `8787`, three named volumes `config`/`state`/`store`. The concrete values below use it.

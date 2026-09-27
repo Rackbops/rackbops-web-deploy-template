@@ -52,6 +52,13 @@ if [[ -z "$want" ]]; then
   exit 1
 fi
 
+# `compose ps -q` (no `--all`) reports only a RUNNING container -- a merely-stopped one (crashed,
+# or deliberately `compose stop`ped) counts the same as "none" here, so this also recreates a
+# stopped container on the next poll, not only a wrong-image one. That's a real behavior change
+# from the pre-#108 script, which never looked at the container's state at all: harmless self-
+# healing for the common case (a crash), but if a stopped container is ever meant to STAY stopped,
+# disable the timer (`systemctl stop <app>-deploy.timer`) rather than relying on this script to
+# leave it alone.
 cid="$(docker compose ps -q "$SERVICE")"
 if [[ -n "$cid" ]]; then
   have="$(docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || echo none)"
