@@ -146,6 +146,14 @@ real box and the *shared* gate proves that piece end-to-end.
 | `Rackbops/kenzen` | **node-app** | pull (`deploy-pull` timer, image-digest diff) | **Live on nucbox** (`Tooling#479`), and **source of `node-app/ci/`** -- `release.yml.example` and `image-ratchet.md` (`Tooling#511`) genericize Kenzen's own `.github/workflows/{release,image-ratchet}.yml`, the multi-arch-build-on-tag and build-real-image-and-assert shapes `artifact-console`'s own `deploy/` doesn't carry a CI-workflow analog for. Same token-sidecar tunnel as `artifact-console`'s row above. |
 | `Rackbops/discord-mcp` | **node-app**, no-Access variant | pull (`deploy-pull` timer, image-digest diff) | **Live on nucbox** at `mcp.rackbops.com` (`Tooling#758`), and **source of the no-Access variant section + the container-lockdown section + `set-tunnel-token.sh.example`.** No Access application -- the service's own bearer auth, a Host/Origin allowlist, and a Free-plan rate-limit rule front it instead. Same token-sidecar tunnel as the rows above. `ReadonlyRootfs=true`/`CapDrop=[ALL]`/`NoNewPrivs=1` were verified live before the deployment went public (#758); the lockdown section's remaining fields (read-only config mount, sidecar lockdown, pinned sidecar tag, log caps) landed later via `Tooling#775` (merged `discord-mcp#19`) and are also now confirmed live on nucbox as of 2026-09-27. |
 
+**"image-digest diff" (the table's own shorthand for all four `deploy-pull` rows above) still
+holds after [#108](https://github.com/Rackbops/rackbops-web-deploy-template/issues/108), with one
+change worth naming: the comparison's target moved from a before/after snapshot of the tag's own
+image to the RUNNING CONTAINER's image vs. the tag's, so a recreate that itself fails is retried
+on the next poll instead of being reported "unchanged" forever. None of the four consumers' own
+container contracts, ports or volumes changed -- #108 only touches which two digests
+`deploy-pull.sh` compares.**
+
 **The repo-root web-root knob is now run for real** -- by the `rackbops-ui-ux-std-lib` showcase
 above (the sibling `../styles` import), so it is no longer inferred-only: the knob itself and both
 `nginx.conf.*.example` deny blocks that make it safe (landed in #19) are confirmed by a running

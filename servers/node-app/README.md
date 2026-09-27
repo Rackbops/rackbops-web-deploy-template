@@ -8,8 +8,11 @@ behind the Cloudflare Access gate. Its distinctive parts vs `nginx-static`:
   the sidecar — that no-port bind is the security floor; Access is the door.
 - **A restart-on-update story.** nginx re-reads files per request, so it never swaps a container; a
   process must reload code, so a new image means a new container. `publish/deploy-pull.sh` does the
-  swap: `docker login` → `docker compose pull` → recreate **only when the image digest moved**. The
-  app **never pulls itself** (design §10's 53k-crash-loop lesson) — an external one-shot timer does.
+  swap: `docker login` → `docker compose pull` → recreate **only when the running container isn't
+  already on the tag's image** ([#108](https://github.com/Rackbops/rackbops-web-deploy-template/issues/108):
+  not "only when the digest moved" — a recreate that itself failed leaves that mismatch in place, so
+  the next poll retries it even though the tag's own digest hasn't changed since). The app **never
+  pulls itself** (design §10's 53k-crash-loop lesson) — an external one-shot timer does.
 
 **Reference consumer: `artifact-console`** — image `ghcr.io/rackbops/artifact-console` (private),
 container port `8787`, three named volumes `config`/`state`/`store`. The concrete values below use it.
@@ -20,7 +23,7 @@ container port `8787`, three named volumes `config`/`state`/`store`. The concret
 |---|---|---|
 | `compose.yaml.example` | `/opt/stacks/<app>/compose.yaml` | the app service (built image, named volumes, no host port) + a `cloudflared` token-tunnel sidecar behind an opt-in `tunnel` profile |
 | `.env.example` | `/opt/stacks/<app>/.env` (`chmod 600`) | `IMAGE`/`IMAGE_TAG`, the `REGISTRY_*` pull credential, `CLOUDFLARE_TUNNEL_TOKEN`, app config; **fill in, never commit** |
-| `publish/deploy-pull.sh.example` | `/opt/stacks/<app>/deploy/deploy-pull.sh` | the one-shot: login → `compose pull` → digest-diff → `up -d` on change |
+| `publish/deploy-pull.sh.example` | `/opt/stacks/<app>/deploy/deploy-pull.sh` | the one-shot: login → `compose pull` → compare the running container's image to the tag's → `up -d` on a mismatch |
 | `publish/deploy-pull.service.example` | `/etc/systemd/system/<app>-deploy.service` | oneshot system unit, drops to `<user>` (must be in the `docker` group) |
 | `publish/deploy-pull.timer.example` | `/etc/systemd/system/<app>-deploy.timer` | polls the registry (`OnBootSec` + `OnUnitActiveSec`) |
 | `publish/set-tunnel-token.sh.example` | `/opt/stacks/<app>/deploy/set-tunnel-token.sh` | writes `CLOUDFLARE_TUNNEL_TOKEN` into `.env` from stdin, so the token never touches shell history or an agent's context -- see [The gate](#the-gate--a-per-app-token-tunnel-not-the-shared-host-tunnel) |
@@ -183,7 +186,14 @@ block goes in — don't discover it for the first time in production, behind a l
 
 ## The deploy-pull timer (image auto-swap)
 
-`publish/deploy-pull.sh` swaps the container when a newer image is published. Install the paired units
+`publish/deploy-pull.sh` swaps the container when a newer image is published. Its recreate
+decision compares the **running container's** image against the tag's image, not a before/after
+snapshot of the tag alone -- so a recreate that itself fails (a daemon error, the unit's own
+timeout) is retried on the next run instead of being reported "unchanged" forever
+([#108](https://github.com/Rackbops/rackbops-web-deploy-template/issues/108)). Since #108, the
+timer also restarts a container that is merely **stopped** (a crash, or a deliberate `docker
+stop`) -- to keep a service down for maintenance, stop its timer first
+(`systemctl stop <app>-deploy.timer`) and start it again afterwards. Install the paired units
 once (box side):
 
 ```bash
