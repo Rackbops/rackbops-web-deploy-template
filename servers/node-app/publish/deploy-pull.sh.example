@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# <app> auto-deploy -- pull the published image and recreate the container ONLY when the digest moved.
+# <app> auto-deploy -- pull the published image and recreate the container ONLY when it isn't
+# already running that image.
 #
 # Copy to `deploy/deploy-pull.sh` in your app repo; set STACK_DIR + SERVICE below. A systemd system
 # timer (the paired .service/.timer) runs it on a poll. UNLIKE nginx-static's pull model (a git clone
 # + logged reminders, no docker), a container app must actually SWAP its image, so this DOES run
-# docker: log in to the registry, `compose pull`, and `up -d` when-and-only-when the local image for
-# the tag changed. That means the timer's user must be in the `docker` group (root-equivalent) -- see
-# the README's trust note.
+# docker: log in to the registry, `compose pull`, and `up -d` when-and-only-when the RUNNING
+# CONTAINER's own image doesn't match the tag's image (#108: comparing the running container, not a
+# before/after snapshot of the tag alone, is what makes a failed recreate retry on the next run
+# instead of reporting "unchanged" forever). That means the timer's user must be in the `docker`
+# group (root-equivalent) -- see the README's trust note.
 #
 # The app NEVER pulls itself. This external one-shot is the only thing that swaps the image -- design
 # §10's load-bearing "the thing being replaced never performs its own replacement" (1.x's in-place
@@ -28,27 +31,43 @@ if [[ -n "$reg_token" ]]; then
   printf '%s' "$reg_token" | docker login "$reg" -u "${reg_user:-USERNAME}" --password-stdin >/dev/null
 fi
 
-# The image ref compose will use (resolved from compose.yaml + .env), and its LOCAL id now. Compare
-# the id BEFORE vs AFTER the pull: `docker compose images` reports the RUNNING container's image
-# (still the old one until `up -d`), so it can't tell you a newer image was fetched -- the local
-# tag's id can.
+# The image ref compose will use (resolved from compose.yaml + .env).
 # One line for one service; take the first with a parameter expansion, NOT `| head` -- under
 # `set -o pipefail` a `| head` can SIGPIPE-abort the caller if the writer keeps writing (the
 # anti-pattern nginx-static's deploy-pull.sh deliberately avoids; harmless here, consistent to match).
 img="$(docker compose config --images "$SERVICE")"; img="${img%%$'\n'*}"
-before="$(docker image inspect --format '{{.Id}}' "$img" 2>/dev/null || echo none)"
 
 docker compose pull "$SERVICE"
 
-after="$(docker image inspect --format '{{.Id}}' "$img" 2>/dev/null || echo none)"
+# Decide by comparing the RUNNING CONTAINER's image against the tag's image, not a before/after
+# snapshot of the tag alone (#108: a before/after tag comparison can never notice that `up -d`
+# itself failed -- if the pull succeeds but the recreate below doesn't, `before == after` on every
+# later run forever, so a daemon error or the unit's own timeout killing `up -d` mid-recreate
+# leaves the service on the old image, or down if the old container was already removed, with no
+# further retry). `.Image` on a container is the image ID it's actually running, comparable
+# directly to `.Id` on the image the tag now points at.
+want="$(docker image inspect --format '{{.Id}}' "$img")"
+if [[ -z "$want" ]]; then
+  echo "<app>: docker image inspect returned no id for $img -- refusing to guess, not recreating." >&2
+  exit 1
+fi
 
-if [[ "$before" == "$after" ]]; then
-  echo "<app>: $img unchanged (${after:0:19}), nothing to do."
+cid="$(docker compose ps -q "$SERVICE")"
+if [[ -n "$cid" ]]; then
+  have="$(docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || echo none)"
+else
+  have="none"
+fi
+
+if [[ "$have" == "$want" ]]; then
+  echo "<app>: $img unchanged (${want:0:19}), nothing to do."
   exit 0
 fi
 
-echo "<app>: $img changed ${before:0:19} -> ${after:0:19} -- recreating the container."
+echo "<app>: $img changed ${have:0:19} -> ${want:0:19} -- recreating the container."
 # Recreate just the app with the new image; the cloudflared sidecar keeps running. --force-recreate
-# so the swap is unconditional (we already know the digest moved), not left to compose's own change
-# detection; --no-build so a stray `build:` can never silently roll code back to a local build.
+# so the swap is unconditional (we already know the running container doesn't match), not left to
+# compose's own change detection; --no-build so a stray `build:` can never silently roll code back
+# to a local build. If this fails, the script exits non-zero (set -e) with `have` still not equal to
+# `want` on disk -- the unit shows failed, and the next timer run sees the same mismatch and retries.
 docker compose up -d --no-build --force-recreate "$SERVICE"
