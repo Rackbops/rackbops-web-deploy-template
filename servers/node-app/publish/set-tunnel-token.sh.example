@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Writes a Cloudflare tunnel connector token into this app's `.env`, without the token ever
+# passing through an agent's context window, a shell history file, or a process-list argument.
+#
+# Copy to `deploy/set-tunnel-token.sh` in the stack dir (next to `compose.yaml` and `.env`), set
+# STACK_DIR and EXPECTED_TUNNEL_ID (see below), then run it two ways:
+#   - piped:       printf '%s' "$TOKEN" | STACK_DIR=/opt/stacks/<app> EXPECTED_TUNNEL_ID=<id> ./set-tunnel-token.sh
+#   - interactive: ssh -t <box> 'STACK_DIR=/opt/stacks/<app> EXPECTED_TUNNEL_ID=<id> /opt/stacks/<app>/deploy/set-tunnel-token.sh'
+#     (an ssh -t session gives stdin a TTY, so the script prompts and reads the paste with echo
+#     off, instead of expecting piped input)
+#
+# It accepts the bare token OR the whole "cloudflared service install <token>" line the
+# Cloudflare dashboard copies -- either way it extracts just the token. Genericized from a live
+# helper written for Rackbops/discord-mcp's deploy (Rackbops/Tooling#758); see
+# Rackbops/Tooling#776 for why: a token pasted straight into a command line or a file written by
+# hand both end up in shell history / a session transcript, which this avoids.
+set -euo pipefail
+
+# --- Required, no hardcoded app or tunnel: the operator sets both per stack. ---
+: "${STACK_DIR:?set STACK_DIR to the stack directory holding compose.yaml and .env (e.g. /opt/stacks/<app>)}"
+: "${EXPECTED_TUNNEL_ID:?set EXPECTED_TUNNEL_ID to the Cloudflare tunnel id for this app, so a token pasted for the wrong tunnel is refused instead of silently applied}"
+
+app="$(basename "$STACK_DIR")"
+env_file="$STACK_DIR/.env"
+
+cd "$STACK_DIR"
+if [[ ! -f "$env_file" ]]; then
+  echo "$app: no .env at $env_file -- copy .env.example there first" >&2
+  exit 1
+fi
+
+if [[ -t 0 ]]; then
+  # Interactive (ssh -t): read one pasted line without echoing it.
+  printf 'Paste the connector token (or the whole install command), then press Enter: ' >&2
+  IFS= read -rs input || true
+  echo >&2
+else
+  input="$(cat)"
+fi
+
+tok="$(printf '%s' "$input" | tr -d '\r' | grep -oE 'eyJ[A-Za-z0-9+/=_-]{100,}' | head -n1 || true)"
+if [[ -z "$tok" ]]; then
+  echo "$app: no tunnel token found on stdin (expected a string starting eyJ)" >&2
+  exit 1
+fi
+
+# The token is base64 JSON naming the tunnel id ({"a":<account>,"t":<tunnel id>,"s":<secret>});
+# refuse one for a different tunnel so a paste mistake can't quietly repoint this stack's sidecar.
+tid="$(printf '%s' "$tok" | base64 -d 2>/dev/null | grep -oE '"t":"[0-9a-f-]{36}"' | cut -d'"' -f4 || true)"
+if [[ "$tid" != "$EXPECTED_TUNNEL_ID" ]]; then
+  echo "$app: that token is not for this app's tunnel (expected $EXPECTED_TUNNEL_ID, got '${tid:-unreadable}')" >&2
+  exit 1
+fi
+
+tmp="$(mktemp -p "$STACK_DIR" .env.XXXXXX)"
+trap 'rm -f "$tmp"' EXIT
+
+# Rewrite the token line with bash's OWN read/printf builtins, never an external process. An
+# earlier draft did this with `awk -v t="$tok" ...`, which puts the plaintext token into awk's
+# argv -- visible to any local user via `ps auxww`/`/proc/<pid>/cmdline` for the life of that
+# process, and typically captured permanently by execve-argv audit logging (auditd, EDR agents),
+# exactly the class of exposure this script exists to avoid (review finding, Rackbops/Tooling#776).
+# A bash builtin has no argv of its own for anything else to observe, so nothing outside this
+# process ever sees the token, however briefly.
+found=0
+while IFS= read -r line || [[ -n "$line" ]]; do
+  if [[ "$line" == CLOUDFLARE_TUNNEL_TOKEN=* ]]; then
+    printf 'CLOUDFLARE_TUNNEL_TOKEN=%s\n' "$tok"
+    found=1
+  else
+    printf '%s\n' "$line"
+  fi
+done < "$env_file" > "$tmp"
+if [[ "$found" -ne 1 ]]; then
+  echo "$app: no CLOUDFLARE_TUNNEL_TOKEN= line in $env_file -- copy .env.example's line first" >&2
+  exit 1
+fi
+chmod 600 "$tmp"
+mv "$tmp" "$env_file"
+trap - EXIT
+
+echo "$app: tunnel token written (${#tok} chars, tunnel $tid)"
