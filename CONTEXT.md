@@ -38,6 +38,25 @@ still resolve by GitHub's owner redirect, but `Rackbops/...` is canonical.)
   Cloudflare Access + tunnel + DNS flow was proven **identical across two origins** in
   `Tooling#282` (one multi-domain Access app fronting a loopback nginx origin), which is the
   evidence that the gate is genuinely origin-agnostic and belongs in one shared place.
+- **`Rackbops/discord-mcp` `deploy/`** (private) -- source of `servers/node-app/README.md`'s
+  no-Access variant section, the container-lockdown section's live-verified fields, and of
+  `publish/set-tunnel-token.sh.example`. `Rackbops/Tooling#758` is the live deployment
+  (`mcp.rackbops.com`, no Access application) these were genericized from: the Free-plan
+  rate-limit rule's actual match/counting/period shape and the lockdown's live-verified fields
+  (`ReadonlyRootfs=true`, `CapDrop=[ALL]`, `SecurityOpt=[no-new-privileges:true]`) come from that
+  issue's evidence comment. The lockdown section's other fields (config mounted read-only, the
+  same lockdown on the `cloudflared` sidecar, pinning the sidecar's image tag, log caps) were
+  filed as discord-mcp's own follow-up in issue #739, not yet landed there as of this writing --
+  the template states them as recommended practice regardless of that follow-up's status, not as
+  something already proven live. The client-IP-header trust-boundary reasoning is discord-mcp's
+  own (its README's `DISCORD_MCP_CLIENT_IP_HEADER` section, itself sourced to #757 /
+  `hostValidation.ts`'s comment) -- #758's evidence only records that the header was set
+  (`DISCORD_MCP_CLIENT_IP_HEADER=cf-connecting-ip`), not the reasoning for when trusting it is
+  safe; that reasoning is cited to discord-mcp's README, not to #758, for exactly that reason.
+  `set-tunnel-token.sh.example` genericizes a helper written for that same deployment (STACK_DIR
+  and the tunnel id were hardcoded there; both are now operator-set), independently hardened
+  during `Rackbops/Tooling#776`'s own review gate to stop passing the token through an external
+  command's argv (`awk -v`) -- a leak the live helper this was genericized from still has.
 
 Where a scaffold and its source ever diverge, the **source's** proven behavior wins -- re-genericize
 from it rather than editing the `.example` free-hand.
@@ -75,6 +94,14 @@ from it rather than editing the `.example` free-hand.
   Cloudflare made its own IdP the default for Zero Trust orgs created from ~2026-06 and stopped
   auto-adding one-time PIN, so what a consumer's account actually carries depends on its age --
   re-check before rewording `gate/README.md` §1a's IdP note.
+- **A Free-plan zone gets exactly one custom WAF rate-limiting rule.** Read from Cloudflare's own
+  rate-limiting-rules plan-limits documentation, 2026-09-26, and confirmed against a live rule on
+  `mcp.rackbops.com` (`Rackbops/Tooling#758`) whose actual shape -- `(http.host eq
+  "mcp.rackbops.com")`, counted by `cf.colo.id` **and** `ip.src`, 60 requests / 10 s, blocking for
+  10 s -- is what `servers/node-app/README.md`'s no-Access variant section cites #758 for.
+  **Date-sensitive, like the IdP-default entry above:** Cloudflare's own per-plan rule counts are
+  the kind of thing that changes with plan revisions -- re-check before restating the "exactly
+  one" number.
 - **The publish-scp connection/copy cost is by design -- #67 weighed three reductions and kept the
   proven shape.** The four connections a publish opens (staging setup, transfer, swap, cleanup) are
   enumerated in the scaffold itself (`publish-scp.ps1.example:69-71`; the calls are at `:197`/`:204`/
@@ -111,6 +138,7 @@ real box and the *shared* gate proves that piece end-to-end.
 | `Rackbops/rackbops-ui-ux-std-lib` showcase | nginx-static | pull (git timer) | **Live** (`Rackbops/rackbops-ui-ux-std-lib#2`, shipped). Confirms the repo-root web-root knob for real (sibling `../styles` import) -- but its gate is `Tooling/docs/per-app-cloudflare-access-tunnel.md`'s **per-app token-sidecar tunnel** (zero published host port; `cloudflared` sidecar in its own compose project), not this repo's shared loopback-bound-port `gate/`. `Tooling`'s own doc calls that pattern out as the right one for a brand-new app-specific endpoint, so this is a deliberate divergence, not a template gap -- see [Open questions](#open-questions). |
 | `Rackbops/artifact-console` | **node-app** | pull (`deploy-pull` timer, image-digest diff) | **Source of `node-app`.** The tier genericizes its **container contract** (image `ghcr.io/rackbops/artifact-console`, port 8787, three named volumes config/state/store) from artifact-console's shipped `deploy/`, plus its **#23 pull-deploy design** (the digest-diff `deploy-pull` swap) and **std-lib's token-sidecar** tunnel -- the pull/sidecar are not in that shipped `deploy/`, which still builds locally. Uses the token-sidecar, not the shared loopback-bound `gate/`. Going live on nucbox is pending (`artifact-console#23`'s apply). |
 | `Rackbops/kenzen` | **node-app** | pull (`deploy-pull` timer, image-digest diff) | **Live on nucbox** (`Tooling#479`), and **source of `node-app/ci/`** -- `release.yml.example` and `image-ratchet.md` (`Tooling#511`) genericize Kenzen's own `.github/workflows/{release,image-ratchet}.yml`, the multi-arch-build-on-tag and build-real-image-and-assert shapes `artifact-console`'s own `deploy/` doesn't carry a CI-workflow analog for. Same token-sidecar tunnel as `artifact-console`'s row above. |
+| `Rackbops/discord-mcp` | **node-app**, no-Access variant | pull (`deploy-pull` timer, image-digest diff) | **Live on nucbox** at `mcp.rackbops.com` (`Tooling#758`), and **source of the no-Access variant section + the container-lockdown section's live-verified fields + `set-tunnel-token.sh.example`.** No Access application -- the service's own bearer auth, a Host/Origin allowlist, and a Free-plan rate-limit rule front it instead. Same token-sidecar tunnel as the rows above; `ReadonlyRootfs=true`/`CapDrop=[ALL]`/`NoNewPrivs=1` were verified live before the deployment went public -- the lockdown section's other fields (read-only config mount, sidecar lockdown, pinned sidecar tag, log caps) were filed as discord-mcp's own follow-up (#739), not yet landed there. |
 
 **The repo-root web-root knob is now run for real** -- by the `rackbops-ui-ux-std-lib` showcase
 above (the sibling `../styles` import), so it is no longer inferred-only: the knob itself and both
