@@ -39,16 +39,22 @@ still resolve by GitHub's owner redirect, but `Rackbops/...` is canonical.)
   `Tooling#282` (one multi-domain Access app fronting a loopback nginx origin), which is the
   evidence that the gate is genuinely origin-agnostic and belongs in one shared place.
 - **`Rackbops/discord-mcp` `deploy/`** (private) -- source of `servers/node-app/README.md`'s
-  no-Access variant section, the container-lockdown section's live-verified fields, and of
+  no-Access variant section, the container-lockdown section, and of
   `publish/set-tunnel-token.sh.example`. `Rackbops/Tooling#758` is the live deployment
   (`mcp.rackbops.com`, no Access application) these were genericized from: the Free-plan
-  rate-limit rule's actual match/counting/period shape and the lockdown's live-verified fields
-  (`ReadonlyRootfs=true`, `CapDrop=[ALL]`, `SecurityOpt=[no-new-privileges:true]`) come from that
-  issue's evidence comment. The lockdown section's other fields (config mounted read-only, the
-  same lockdown on the `cloudflared` sidecar, pinning the sidecar's image tag, log caps) were
-  filed as discord-mcp's own follow-up in issue #739, not yet landed there as of this writing --
-  the template states them as recommended practice regardless of that follow-up's status, not as
-  something already proven live. The client-IP-header trust-boundary reasoning is discord-mcp's
+  rate-limit rule's actual match/counting/period shape and the lockdown's first three
+  live-verified fields (`ReadonlyRootfs=true`, `CapDrop=[ALL]`,
+  `SecurityOpt=[no-new-privileges:true]`) come from that issue's evidence comment. The lockdown
+  section's remaining fields (config mounted read-only, the same lockdown on the `cloudflared`
+  sidecar, pinning the sidecar's image tag, log caps) were tracked as discord-mcp's own follow-up
+  in `Rackbops/Tooling#775` (split from the general give-backs issue `Tooling#739` -- #758's
+  evidence comment, written before the split, still names `#739`) -- **since landed**, merged as
+  `Rackbops/discord-mcp#19` and applied live on nucbox 2026-09-27, per that issue's closing
+  comment: `cloudflare/cloudflared:2026.9.3` pinned, `ReadonlyRootfs=true`/`CapDrop=[ALL]`/
+  `no-new-privileges` on both containers, `/config` mounted read-only, log caps in place, and
+  `/healthz` still answering. Every field in this template's lockdown section is now confirmed
+  live on the reference deployment, not just the first three. The client-IP-header trust-boundary
+  reasoning is discord-mcp's
   own (its README's `DISCORD_MCP_CLIENT_IP_HEADER` section, itself sourced to #757 /
   `hostValidation.ts`'s comment) -- #758's evidence only records that the header was set
   (`DISCORD_MCP_CLIENT_IP_HEADER=cf-connecting-ip`), not the reasoning for when trusting it is
@@ -138,7 +144,7 @@ real box and the *shared* gate proves that piece end-to-end.
 | `Rackbops/rackbops-ui-ux-std-lib` showcase | nginx-static | pull (git timer) | **Live** (`Rackbops/rackbops-ui-ux-std-lib#2`, shipped). Confirms the repo-root web-root knob for real (sibling `../styles` import) -- but its gate is `Tooling/docs/per-app-cloudflare-access-tunnel.md`'s **per-app token-sidecar tunnel** (zero published host port; `cloudflared` sidecar in its own compose project), not this repo's shared loopback-bound-port `gate/`. `Tooling`'s own doc calls that pattern out as the right one for a brand-new app-specific endpoint, so this is a deliberate divergence, not a template gap -- see [Open questions](#open-questions). |
 | `Rackbops/artifact-console` | **node-app** | pull (`deploy-pull` timer, image-digest diff) | **Source of `node-app`.** The tier genericizes its **container contract** (image `ghcr.io/rackbops/artifact-console`, port 8787, three named volumes config/state/store) from artifact-console's shipped `deploy/`, plus its **#23 pull-deploy design** (the digest-diff `deploy-pull` swap) and **std-lib's token-sidecar** tunnel -- the pull/sidecar are not in that shipped `deploy/`, which still builds locally. Uses the token-sidecar, not the shared loopback-bound `gate/`. Going live on nucbox is pending (`artifact-console#23`'s apply). |
 | `Rackbops/kenzen` | **node-app** | pull (`deploy-pull` timer, image-digest diff) | **Live on nucbox** (`Tooling#479`), and **source of `node-app/ci/`** -- `release.yml.example` and `image-ratchet.md` (`Tooling#511`) genericize Kenzen's own `.github/workflows/{release,image-ratchet}.yml`, the multi-arch-build-on-tag and build-real-image-and-assert shapes `artifact-console`'s own `deploy/` doesn't carry a CI-workflow analog for. Same token-sidecar tunnel as `artifact-console`'s row above. |
-| `Rackbops/discord-mcp` | **node-app**, no-Access variant | pull (`deploy-pull` timer, image-digest diff) | **Live on nucbox** at `mcp.rackbops.com` (`Tooling#758`), and **source of the no-Access variant section + the container-lockdown section's live-verified fields + `set-tunnel-token.sh.example`.** No Access application -- the service's own bearer auth, a Host/Origin allowlist, and a Free-plan rate-limit rule front it instead. Same token-sidecar tunnel as the rows above; `ReadonlyRootfs=true`/`CapDrop=[ALL]`/`NoNewPrivs=1` were verified live before the deployment went public -- the lockdown section's other fields (read-only config mount, sidecar lockdown, pinned sidecar tag, log caps) were filed as discord-mcp's own follow-up (#739), not yet landed there. |
+| `Rackbops/discord-mcp` | **node-app**, no-Access variant | pull (`deploy-pull` timer, image-digest diff) | **Live on nucbox** at `mcp.rackbops.com` (`Tooling#758`), and **source of the no-Access variant section + the container-lockdown section + `set-tunnel-token.sh.example`.** No Access application -- the service's own bearer auth, a Host/Origin allowlist, and a Free-plan rate-limit rule front it instead. Same token-sidecar tunnel as the rows above. `ReadonlyRootfs=true`/`CapDrop=[ALL]`/`NoNewPrivs=1` were verified live before the deployment went public (#758); the lockdown section's remaining fields (read-only config mount, sidecar lockdown, pinned sidecar tag, log caps) landed later via `Tooling#775` (merged `discord-mcp#19`) and are also now confirmed live on nucbox as of 2026-09-27. |
 
 **The repo-root web-root knob is now run for real** -- by the `rackbops-ui-ux-std-lib` showcase
 above (the sibling `../styles` import), so it is no longer inferred-only: the knob itself and both

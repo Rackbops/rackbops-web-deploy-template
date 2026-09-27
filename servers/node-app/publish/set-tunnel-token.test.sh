@@ -8,10 +8,11 @@
 # Each fake "token" is base64 of {"a":"acct","t":"<tunnel-id>","s":"<padded-secret>"} -- the
 # secret is padded so the encoded string actually satisfies the SUT's own
 # `eyJ[A-Za-z0-9+/=_-]{100,}` extraction regex; the minimal `"s":"secret"` shape from the issue
-# comes out at 92 chars total, 8 short of the 103 the regex requires, so a short secret would make
-# every "correct token" case fail extraction before ever reaching the tunnel-id check it's meant to
-# test. Real Cloudflare tunnel tokens are this long in practice (their own secret field is a long
-# random string) -- the padding here just reproduces that length, not a different shape.
+# comes out at 92 chars total -- 11 short of the regex's real 103-char floor (`eyJ` plus the
+# `{100,}` quantifier), so a short secret would make every "correct token" case fail extraction
+# before ever reaching the tunnel-id check it's meant to test. Real Cloudflare tunnel tokens are
+# this long in practice (their own secret field is a long random string) -- the padding here just
+# reproduces that length, not a different shape.
 #
 # NOTE on where this proves what it claims: `chmod`/`stat` mode bits are only meaningful on a real
 # POSIX filesystem. A Windows/MSYS (Git Bash) filesystem silently ignores chmod and always reports
@@ -174,7 +175,7 @@ argv_log="$(mktemp)"
 # (the exact bug this case was added for), it shows up here even though every OTHER assertion in
 # this suite -- which only inspects the script's own stdout/stderr and the final .env -- would
 # stay green.
-for cmd in awk base64 grep tr cut mktemp chmod mv head basename; do
+for cmd in awk base64 grep tr cut mktemp chmod mv head basename cat; do
   real="$(command -v "$cmd")"
   cat > "$shim_dir/$cmd" <<SHIM
 #!/usr/bin/env bash

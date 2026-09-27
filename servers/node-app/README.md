@@ -253,4 +253,7 @@ sudo rm /etc/systemd/system/<app>-deploy.{service,timer} && sudo systemctl daemo
 cd /opt/stacks/<app> && docker compose --profile tunnel down     # add -v to also drop the volumes
 ```
 
-Then remove the tunnel ingress rule + Access app + DNS in Cloudflare (the gate runbook, in reverse).
+Then remove the tunnel ingress rule + Access app + DNS in Cloudflare (the gate runbook, in
+reverse). **For the [no-Access variant](#variant-a-service-cloud-clients-call-no-access-app):**
+there's no Access app to remove -- just the ingress rule and DNS -- and drop the Uptime Kuma
+monitor on `/healthz` instead of an env-health Access-login probe.
