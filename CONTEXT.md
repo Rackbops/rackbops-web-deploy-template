@@ -120,7 +120,8 @@ from it rather than editing the `.example` free-hand.
 - **A `cloudflared` ingress rule with `originRequest.access.required` refuses a request that carries no
   Access JWT, and rules match on `hostname` plus a regex `path`, first match wins.** Read from
   `cloudflared`'s source (`ingress/middleware/jwtvalidator.go`: no `Cf-Access-Jwt-Assertion` header ->
-  `403` "no access token in request"; `ingress/ingress.go`: the validator is attached per rule, `path` is
+  a bare `403`, the reason "no access token in request" going only to cloudflared's log;
+  `ingress/ingress.go`: the validator is attached per rule, `path` is
   compiled with `regexp.Compile`, `FindMatchingRule` returns the first match), `master`, 2026-10-02 -- not
   from a live tunnel. Cloudflare's own documentation describes `access` only as requiring `cloudflared` to
   validate the JWT "prior to proxying" and does not give the status. This is why `servers/usr/README.md`
@@ -128,6 +129,16 @@ from it rather than editing the `.example` free-hand.
   hostname's validated one. The other half -- that a request let through by a Bypass policy carries no
   Access JWT -- is **inferred**, not documented. **Date-sensitive:** `cloudflared`'s behaviour changes
   between releases; re-check before relying on it.
+- **`docker compose config --images <service>` includes that service's dependencies, in no guaranteed
+  order -- and node-app's `deploy-pull.sh` takes the FIRST line.** Read from `docker/compose`
+  (`cmd/compose/config.go`'s `runConfigImages` iterates `project.Services`, a Go map, with no sort;
+  `compose-go`'s `WithSelectedServices` includes dependencies when no option is given) on `main`, 2026-10-02
+  -- an independent audit read v2.29.7 and v2.40.3 the same way. **Read, not run.** `deploy-pull.sh.example:35-38`
+  assumes "one line for one service", which holds only while the app service has no `depends_on`: one with a
+  dependency can have the script compare the dependency's image instead and recreate the app spuriously on
+  some ticks. `deploy-pull.test.sh` stubs `config --images` as a single line, so nothing tests it.
+  `servers/usr/` therefore gives `usr` no `depends_on`; **node-app's script itself is unchanged here** -- a
+  fix is its own change to the proven script, not folded into a consumer's scaffold.
 - **The publish-scp connection/copy cost is by design -- #67 weighed three reductions and kept the
   proven shape.** The four connections a publish opens (staging setup, transfer, swap, cleanup) are
   enumerated in the scaffold itself (`publish-scp.ps1.example:69-71`; the calls are at `:197`/`:204`/

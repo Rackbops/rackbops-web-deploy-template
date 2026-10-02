@@ -14,8 +14,10 @@ It is not a new base server: the shape is node-app's, and usr is the consumer. I
 
 **Placeholders** (this repo is public, so none of these is a real value): `<USR_HOSTNAME>` (usr's own public
 hostname), `<COOKIE_DOMAIN>` (a parent domain of it and of the apps that sign in through it), `<TEAM>` and
-`<USR_AUD>` (your Access team name and the usr Access app's AUD tag), `<TUNNEL_ID>`, `<ACCOUNT_ID>`,
-`<BOX>` (the host that runs this stack), `<BACKUP_HOST>` (a different host), `<CONSUMER_CONTAINER>`.
+`<USR_AUD>` (your Access team name and the usr Access app's AUD tag), `<TUNNEL_ID>`, `<BOX>` (the host that
+runs this stack), `<BACKUP_HOST>` (a different host), `<STAGING_DIR>` (where the nightly dump is written on
+`<BOX>`), `<CONSUMER_CONTAINER>`. The rest (`<USER>`, `<DATE>`, `<CLOUDFLARED_TAG>`, ...) are filled in
+where they appear.
 
 ## What usr is, and what this project assumes
 
@@ -25,17 +27,18 @@ are in that repo.
 
 | Fact this stack relies on | Source |
 |---|---|
-| The image is a **private** ghcr package, published `linux/amd64` only, as `latest` on every push to `main` (plus `sha-<short>` and semver tags) | `.github/workflows/publish-image.yml:39-44, 51` |
+| The image is a **private** ghcr package (usr `README.md:175-176`), published `linux/amd64` only, as `latest` on every push to `main`, plus `sha-<short>` on every push and `X.Y.Z` / `X.Y` on a version tag -- **without** a `v` | `.github/workflows/publish-image.yml:39-44, 51` |
 | Runtime is `node:24-alpine`, `PORT=8432`, `CMD node dist/server/index.js`; **no `HEALTHCHECK`**, no `USER` | `Dockerfile:13, 25, 29` |
 | Migrations are applied at boot, before the server listens | `src/server/index.ts:9` |
 | Postgres is `postgres:18`, data mounted at the **parent** `/var/lib/postgresql` (18+ uses a version subdirectory); its own compose publishes `127.0.0.1:8432` and `127.0.0.1:5434`, which this stack does not | `docker-compose.yml:16-17, 32, 38-42` |
 | `DATABASE_URL`, default `postgres://usr:usr@postgres:5432/usr` | `src/server/lib/db.ts:11, 15` |
 | `GET /api/health` -> `{"ok":true}`, **unauthenticated** | `src/server/app.ts:51, 118` |
-| `GET /.well-known/jwks.json`: unauthenticated, `Cache-Control: public, max-age=300`, **one** ES256 key, generated on first use and persisted in `app_settings` | `src/server/app.ts:129-132`, `src/server/lib/jwt.ts:104-127` |
+| `GET /.well-known/jwks.json`: unauthenticated, `Cache-Control: public, max-age=300`, **one** ES256 key, generated on first use and persisted in `app_settings` (section `jwt`: the `kid` and the `privateKey`, two rows) | `src/server/app.ts:129-132`, `src/server/lib/jwt.ts:104-127`, `src/server/lib/settings.ts:24-27` |
 | SSO is **off unless `USR_SSO_COOKIE_DOMAIN` is set**; cookie `nz_id` on that domain, `HttpOnly; Secure; SameSite=Lax`; TTL `USR_SSO_TOKEN_TTL`, default 30m | `src/server/lib/sso.ts:11-12, 46-53, 73-90` |
-| First run: with no credentials, no OAuth, no API key and no users, usr is in **open mode** (every request is a root identity) until the welcome screen's `POST /api/auth/setup` creates the initial admin (holding `usr:admin`) and the break-glass local credentials | `src/server/lib/auth.ts:123-148, 199-210`, `src/server/app.ts:92`, `src/server/routes/auth.ts:99-124` |
+| **Open mode**: while no local credentials, no OAuth provider and no API key are configured, every request is a root identity. The welcome screen (shown when there are also no users) calls `POST /api/auth/setup`, which creates the initial admin (holding `usr:admin`) and the break-glass local credentials -- configuring those is what ends open mode; merely creating users does not | `src/server/lib/auth.ts:123-148, 199-210`, `src/server/app.ts:92`, `src/server/routes/auth.ts:99-124` |
 | Apps are string namespaces, no registration; role names match `^[a-z0-9][a-z0-9._-]{0,63}$`; `POST /api/roles` (a duplicate is a 400) and `GET /api/roles?app=` need `roles:write` / `roles:read`, which `usr:admin` satisfies (`*`) | usr `README.md` "Concepts", `src/server/lib/roles.ts:17, 40-72`, `src/server/routes/roles.ts:31-43`, `src/server/lib/roles-lookup.ts:69-70` |
 | `PUT /api/users/:id/roles {roleIds}` **replaces** the user's whole role set | `src/server/lib/roles.ts:105-114`, `src/server/routes/users.ts:67-74` |
+| The UI: a Roles page at `#/roles` creates a role from an app, a name and an optional description; a user's page at `#/users/<uuid>` assigns roles per app; the welcome screen asks for an email, a username and a password, and a name is optional | `src/ui/App.tsx:17, 31, 84-89, 128-133`, `src/ui/pages/RolesPage.tsx:102-123`, `src/ui/pages/UserEditPage.tsx:70-89`, `src/ui/pages/SetupPage.tsx:34-53`, `src/server/routes/auth.ts:107-109` |
 
 ## Files
 
@@ -68,12 +71,17 @@ without an Access session -- the JWKS is public data by design (usr serves it un
 above) and a consumer's verifier cannot log in. So create a **second** self-hosted Access application whose
 only destination is the single path `<USR_HOSTNAME>/.well-known/jwks.json`, with one policy: action
 **Bypass**, include **Everyone**. Cloudflare documents that when rules overlap on a root path "the more
-specific rule takes precedence" ([Access application paths](https://developers.cloudflare.com/cloudflare-one/policies/access/app-paths/),
-read 2026-10-02), so this path is bypassed and everything else on the hostname stays behind app 1a.
+specific rule takes precedence" ([Access application paths](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/app-paths/),
+read 2026-10-02), so this path is bypassed and everything else on the hostname stays behind app 1a. (That
+page's own example is `/eng` against `/eng/exec`; a hostname-wide app against a path app is the same rule
+applied, which is **inferred** -- step 6's probes are what prove it.)
 
 **The bypass is exactly `/.well-known/jwks.json`, nothing wider.** Do not widen the destination (no
 `/.well-known/*`, no wildcard host). The closed-door `302` on `/` in step 6 is the check that nothing else
-is bypassed.
+is bypassed. Cloudflare's page also says a path with no rule of its own "will inherit any rules set for" its
+parent, so whether the bypass app reaches below the exact path (`.../jwks.json/x`) is **unknown**; the
+origin-side ingress rule in step 2 is anchored to the exact path, so even if it did, nothing but the JWKS
+gets through, and step 6 probes that path too.
 
 ### 2. Tunnel and DNS
 
@@ -111,14 +119,17 @@ with the service being the compose service name -- but with **two rules for the 
 **Why the JWKS needs its own rule.** The `access` block makes `cloudflared` validate an Access JWT before it
 proxies, per rule. Read from `cloudflared`'s source (`ingress/middleware/jwtvalidator.go` and
 `ingress/ingress.go`, `master`, 2026-10-02): a request with **no** `Cf-Access-Jwt-Assertion` header is
-refused with `403` "no access token in request", rules match on `hostname` and a **regex** `path`, the
-first match wins, and the validator is attached per rule. A request let through by the Bypass policy is not
+refused with a bare `403` (`cloudflared` logs the reason "no access token in request"; the client sees only
+the status), rules match on `hostname` and a **regex** `path`, the first match wins, and the validator is
+attached per rule. A request let through by the Bypass policy is not
 authenticated, so it carries no Access JWT (**inferred** -- Cloudflare's documentation does not say either
 way); on the hostname-wide rule it would be refused `403` at the origin side and the consumer would never
 get the keys. The JWKS-only rule (an anchored regex, so nothing else matches it) lets exactly that path
 through, and every other path is still validated at the origin. Step 6's `200` on the JWKS URL is the proof;
 a `403` there means this rule is missing, misordered, or carries an `access` block. As in the gate runbook,
-the ingress `PUT` replaces the whole array, and read it back afterwards.
+the ingress `PUT` replaces the whole array, and read it back afterwards -- but note that the gate runbook's
+read-back check ("each hostname rule carries its own `originRequest.access`") applies to the
+**hostname-wide** rule only. The JWKS rule is deliberately without one; do not "fix" it.
 
 Then create the **proxied CNAME** for `<USR_HOSTNAME>` to `<TUNNEL_ID>.cfargotunnel.com`
 ([`gate/README.md` step 1c](../../gate/README.md#1c-dns)) -- only now that both Access apps exist.
@@ -142,8 +153,8 @@ sudo mkdir -p /opt/usr/postgres
 Fill `/opt/stacks/usr/.env` (every `<PLACEHOLDER>` in it):
 
 - `IMAGE` -- usr's image, without the tag; `REGISTRY_USER` + `REGISTRY_TOKEN` -- a `read:packages` token for
-  an account that can read that private package (a classic PAT). Nothing else about the registry needs
-  changing for `ghcr.io`.
+  an account that can read that private package. Nothing else about the registry needs changing for
+  `ghcr.io`.
 - `POSTGRES_PASSWORD` -- `openssl rand -hex 24`. **Hex only** (it is spliced into a URL unescaped).
 - `USR_SSO_COOKIE_DOMAIN=<COOKIE_DOMAIN>` -- must be a parent of `<USR_HOSTNAME>` **and** of every app that
   should sign in through usr, or those apps never receive the cookie. `USR_PUBLIC_URL=https://<USR_HOSTNAME>`.
@@ -152,8 +163,10 @@ Fill `/opt/stacks/usr/.env` (every `<PLACEHOLDER>` in it):
 
   ```bash
   printf '%s' "$TOKEN" | STACK_DIR=/opt/stacks/usr EXPECTED_TUNNEL_ID=<TUNNEL_ID> \
-    /opt/stacks/usr/deploy/set-tunnel-token.sh
+    bash /opt/stacks/usr/deploy/set-tunnel-token.sh
   ```
+
+  (`bash <path>`, because a file copied from a `.example` is not executable.)
 
 Pin the `cloudflared` image tag in `compose.yaml` (`<CLOUDFLARED_TAG>`): the deploy timer never pulls the
 sidecar, so an unpinned one never updates.
@@ -167,11 +180,15 @@ docker compose --profile tunnel up -d
 docker compose ps           # usr and postgres both "healthy"; cloudflared up
 ```
 
-`usr` becomes healthy only after Postgres does and its migrations have run, so the first start takes a
-little while (the healthcheck's `start_period` is 30 s). Postgres's data should now be under
-`/opt/usr/postgres` in a version subdirectory.
+`usr` runs its migrations at boot, so the first start takes a little while (the healthcheck's
+`start_period` is 30 s) and may restart once or twice while Postgres is still initialising its data
+directory: a refused connection fails the migrations, the process exits, and `restart: unless-stopped`
+starts it again. `usr` deliberately has no `depends_on: postgres` (see the compose file for why: node-app's
+`deploy-pull.sh` reads `docker compose config --images usr` and must see exactly one image -- **do not add
+one**). Postgres's data should now be under `/opt/usr/postgres` in a version subdirectory.
 
 Then the image auto-swap, which is node-app's, used as is ([its section](../node-app/README.md#the-deploy-pull-timer-image-auto-swap)).
+Run this block from your clone of this repo again (the commands above ended in `/opt/stacks/usr`).
 Replace every `<app>` with `usr`, set `<user>` (a member of the `docker` group -- root-equivalent, read
 node-app's trust note) in the service, and keep `STACK_DIR="/opt/stacks/usr"`, `SERVICE="usr"` in the script:
 
@@ -223,13 +240,16 @@ From a session with **no Access cookie** (not logged in), and **before** anythin
 curl -s -o /dev/null -w "%{http_code}\n" https://<USR_HOSTNAME>/                              # 302 -- the door is shut
 curl -s -o /dev/null -w "%{http_code}\n" https://<USR_HOSTNAME>/api/health                    # 302 -- not bypassed either
 curl -s -o /dev/null -w "%{http_code}\n" https://<USR_HOSTNAME>/.well-known/jwks.json         # 200 -- the one bypass
+curl -s -o /dev/null -w "%{http_code}\n" https://<USR_HOSTNAME>/.well-known/jwks.json/x       # 302 (or 403) -- never 200
 curl -s https://<USR_HOSTNAME>/.well-known/jwks.json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).keys.length))"   # 1
 ```
 
-- The two `302`s are the closed door ([`gate/README.md` step 2](../../gate/README.md#2-verify--the-closed-door-probe)):
+- The `302`s are the closed door ([`gate/README.md` step 2](../../gate/README.md#2-verify--the-closed-door-probe)):
   inspect the `Location` of the first and confirm it names `<USR_HOSTNAME>`. A `200` on `/` is a failed
   rollout -- stop. **The bypass is exactly `/.well-known/jwks.json`**, so everything but that path must
-  `302`; this is the check.
+  `302`; this is the check. The `/x` probe just below the JWKS path should `302` too; a `403` there means
+  Cloudflare's bypass app reached below the exact path and the origin-side rule refused it -- nothing is
+  exposed, but narrow the bypass app's destination. A `200` there is a failed rollout.
 - The JWKS must be `200` with **one** key. (The first request is what generates and stores the key, so
   this is also the first use.) A `403` means the origin-side check refused it -- see step 2's JWKS rule.
 - **The first dump exists on the destination**, is non-empty, and lists cleanly:
@@ -303,15 +323,29 @@ Then remove the two Access apps, the tunnel ingress and DNS record in Cloudflare
 `/opt/usr/postgres` is **not** removed by `down`: delete it yourself only when you mean to destroy
 the roster and the signing key.
 
+## Container lockdown: not applied here
+
+node-app recommends a [container lockdown](../node-app/README.md#container-lockdown-recommended)
+(`read_only`, `cap_drop: [ALL]`, `no-new-privileges`, a read-only config mount). This stack applies only its
+log caps. usr's image has no `USER` line, so it runs as root, and nobody has run it under a read-only root
+filesystem: node-app's "Check first" step (`docker run --rm --read-only --tmpfs /tmp <image> ...`) has not
+been done for usr, and Postgres's entrypoint needs privileges `cap_drop: [ALL]` would remove (**inferred**).
+Do that check before adding any of it; usr is the identity provider for every app behind it, which is a
+reason to.
+
 ## What is verified, and what is not
 
-- **Verified here:** the compose file parses as YAML; every statement about usr's behaviour is cited to
-  its source at the commit above and was read there; every statement about the shape is checked against
-  `servers/node-app/` at this repo's `297bcf1` (the scripts are reused unchanged, and their variable
-  names are matched in `.env.example`); the `cloudflared` behaviours in step 2 were read from its source.
-- **Not verified -- no real rollout has run yet:** `docker compose config` (no Docker on the machine this
-  was written on), any of steps 1-9 on a real box and a real Cloudflare account, the bind-mounted data
+- **Verified here:** the compose file parses as YAML, and (at authoring time, by a throwaway script -- not a
+  committed test; this repo has no CI) every `${VAR}` it uses is defined in `.env.example`, `usr` has no
+  `depends_on` and publishes no port, and the variable names node-app's scripts read are present; every statement about usr's behaviour is cited to its source
+  at the commit above and was read there; every statement about the shape is checked against
+  `servers/node-app/` at this repo's `297bcf1` (the scripts are reused unchanged, and `config --images usr`
+  returning a single image without `depends_on` was **read from `docker/compose`'s source**, not run);
+  the `cloudflared` behaviours in step 2 were read from its source.
+- **Not verified -- no real rollout has run yet:** `docker compose config` itself (no Docker on the machine
+  this was written on), any of steps 1-9 on a real box and a real Cloudflare account, the bind-mounted data
   directory's ownership on first boot (`postgres` creates its own `18/` subdirectory under it -- **unknown**
-  until step 4 shows it), that `pg_dump` over the container socket needs no password (**inferred**), and that
-  a Bypass-policy request carries no Access JWT (**inferred**). Per [`CLAUDE.md`](../../CLAUDE.md), a green
-  parse is not proof the deploy works; the first real consumer's run is.
+  until step 4 shows it), that `pg_dump` over the container socket needs no password (**inferred**), that a
+  Bypass-policy request carries no Access JWT (**inferred**), and whether the bypass app reaches below the
+  exact JWKS path (**unknown**; the `/x` probe in step 6 answers it). Per [`CLAUDE.md`](../../CLAUDE.md), a
+  green parse is not proof the deploy works; the first real consumer's run is.
