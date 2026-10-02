@@ -35,7 +35,7 @@ services:
       # needs percent-encoding.
       - DATABASE_URL=postgres://usr:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/usr
       # Cross-app SSO is OFF unless this is set (an empty value is off). It is the parent domain the
-      # `nz_id` identity cookie is scoped to, so every app under it receives the cookie.
+      # SSO identity cookie is scoped to, so every app under it receives the cookie.
       - USR_SSO_COOKIE_DOMAIN=${USR_SSO_COOKIE_DOMAIN:?set USR_SSO_COOKIE_DOMAIN in .env}
       - USR_SSO_TOKEN_TTL=${USR_SSO_TOKEN_TTL:-30m}
       # The public origin for the registration links a Discord bot hands out when it reaches usr

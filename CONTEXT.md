@@ -67,7 +67,8 @@ still resolve by GitHub's owner redirect, but `Rackbops/...` is canonical.)
   `bffa881ffaff25b67e93e6aa5d190fbe43bb7ed1` (`main`'s head on 2026-09-26, the last push before the
   2026-09-29 read that `Rackbops/artifact-console#101`'s plan took its facts from; that plan names no SHA,
   so this is the pin) -- source of every claim about **usr** in `servers/usr/` (image, port, healthcheck,
-  JWKS, SSO, first-run open mode, roles, the Postgres volume), each cited `file:line` in that README. Unlike
+  JWKS, SSO, first-run open mode, roles, the Postgres volume), stated in that README **without** that private
+  repository's file paths or line numbers (this repo is public; they were read and audited at the pin). Unlike
   the entries above, **nothing here was extracted from a running deployment**: `servers/usr/` is
   `servers/node-app/`'s shape applied to usr's own `docker-compose.yml`, plus the JWKS-bypass ingress rule
   derived from `cloudflared`'s source (see Confirmed facts). Where the scaffold and a real rollout ever

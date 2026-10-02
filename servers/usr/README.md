@@ -21,24 +21,35 @@ where they appear.
 
 ## What usr is, and what this project assumes
 
-Read from usr's own repo (private, a different org's) at commit `bffa881` -- the full SHA and what was
-checked are in [`CONTEXT.md`](../../CONTEXT.md#sources-what-each-scaffold-was-extracted-from). Paths below
-are in that repo.
+Read from usr's own repository (private, a different organisation's) at commit `bffa881`; the full SHA is in
+[`CONTEXT.md`](../../CONTEXT.md#sources-what-each-scaffold-was-extracted-from). This repo is public, so those facts
+are stated here **without** that repository's file paths, line numbers or internal route names (apart from the two
+HTTP paths the runbook itself probes). Re-check any of them against that commit before relying on it.
 
-| Fact this stack relies on | Source |
-|---|---|
-| The image is a **private** ghcr package (usr `README.md:175-176`), published `linux/amd64` only, as `latest` on every push to `main`, plus `sha-<short>` on every push and `X.Y.Z` / `X.Y` on a version tag -- **without** a `v` | `.github/workflows/publish-image.yml:39-44, 51` |
-| Runtime is `node:24-alpine`, `PORT=8432`, `CMD node dist/server/index.js`; **no `HEALTHCHECK`**, no `USER` | `Dockerfile:13, 25, 29` |
-| Migrations are applied at boot, before the server listens | `src/server/index.ts:9` |
-| Postgres is `postgres:18`, data mounted at the **parent** `/var/lib/postgresql` (18+ uses a version subdirectory); its own compose publishes `127.0.0.1:8432` and `127.0.0.1:5434`, which this stack does not | `docker-compose.yml:16-17, 32, 38-42` |
-| `DATABASE_URL`, default `postgres://usr:usr@postgres:5432/usr` | `src/server/lib/db.ts:11, 15` |
-| `GET /api/health` -> `{"ok":true}`, **unauthenticated** | `src/server/app.ts:51, 118` |
-| `GET /.well-known/jwks.json`: unauthenticated, `Cache-Control: public, max-age=300`, **one** ES256 key, generated on first use and persisted in `app_settings` (section `jwt`: the `kid` and the `privateKey`, two rows) | `src/server/app.ts:129-132`, `src/server/lib/jwt.ts:104-127`, `src/server/lib/settings.ts:24-27` |
-| SSO is **off unless `USR_SSO_COOKIE_DOMAIN` is set**; cookie `nz_id` on that domain, `HttpOnly; Secure; SameSite=Lax`; TTL `USR_SSO_TOKEN_TTL`, default 30m | `src/server/lib/sso.ts:11-12, 46-53, 73-90` |
-| **Open mode**: while no local credentials, no OAuth provider and no API key are configured, every request is a root identity. The welcome screen (shown when there are also no users) calls `POST /api/auth/setup`, which creates the initial admin (holding `usr:admin`) and the break-glass local credentials -- configuring those is what ends open mode; merely creating users does not | `src/server/lib/auth.ts:123-148, 199-210`, `src/server/app.ts:92`, `src/server/routes/auth.ts:99-124` |
-| Apps are string namespaces, no registration; role names match `^[a-z0-9][a-z0-9._-]{0,63}$`; `POST /api/roles` (a duplicate is a 400) and `GET /api/roles?app=` need `roles:write` / `roles:read`, which `usr:admin` satisfies (`*`) | usr `README.md` "Concepts", `src/server/lib/roles.ts:17, 40-72`, `src/server/routes/roles.ts:31-43`, `src/server/lib/roles-lookup.ts:69-70` |
-| `PUT /api/users/:id/roles {roleIds}` **replaces** the user's whole role set | `src/server/lib/roles.ts:105-114`, `src/server/routes/users.ts:67-74` |
-| The UI: a Roles page at `#/roles` creates a role from an app, a name and an optional description; a user's page at `#/users/<uuid>` assigns roles per app; the welcome screen asks for an email, a username and a password, and a name is optional | `src/ui/App.tsx:17, 31, 84-89, 128-133`, `src/ui/pages/RolesPage.tsx:102-123`, `src/ui/pages/UserEditPage.tsx:70-89`, `src/ui/pages/SetupPage.tsx:34-53`, `src/server/routes/auth.ts:107-109` |
+- **The image.** A private ghcr package, published for `linux/amd64` only. Its CI pushes `latest` and
+  `sha-<short>` on every push to `main`, and `X.Y.Z` / `X.Y` -- **without** a `v` -- on a version tag. It runs
+  Node 24 on Alpine, listens on port 8432, ships no `HEALTHCHECK`, and runs as root (it has no `USER`).
+- **The database.** It needs Postgres 18 and applies its own migrations at boot, before it listens. Its default
+  connection string, set through `DATABASE_URL`, is `postgres://usr:usr@postgres:5432/usr`. Postgres 18 keeps
+  its data in a version subdirectory, so the data directory is mounted at its **parent**, `/var/lib/postgresql`.
+  usr's own compose also publishes loopback ports for local development, which this stack does not.
+- **Health.** `GET /api/health` answers `{"ok":true}` with no authentication.
+- **The JWKS.** `GET /.well-known/jwks.json` needs no authentication, is cacheable for five minutes, and serves
+  **one** ES256 key. The key is generated the first time it is used and stored in the database (as two settings
+  rows), so the database also holds the signing key.
+- **SSO.** Off unless `USR_SSO_COOKIE_DOMAIN` is set. When set, every login also sets a short-lived signed
+  identity cookie (`HttpOnly`, `Secure`, `SameSite=Lax`) on that parent domain, which sibling apps verify against
+  the JWKS; its lifetime is `USR_SSO_TOKEN_TTL` (default 30 minutes).
+- **First run and open mode.** While no local credentials, no OAuth provider and no API key are configured, usr
+  is in *open mode*: every request is a root identity. A welcome screen (shown when there are also no users)
+  creates the initial admin, who holds the seeded `usr:admin` role, and the break-glass local credentials.
+  Configuring those is what ends open mode; merely creating users does not.
+- **Roles.** Apps are string namespaces with no registration: a role is an app name plus a role name, and
+  creating one needs admin rights, which `usr:admin` has. Names are lowercase letters, digits, `.`, `_` and `-`,
+  starting with a letter or digit, at most 64 characters, so `ac`, `admin` and `viewer` are valid. Creating a
+  role that already exists is refused. Assigning roles to a user **replaces** that user's whole role set.
+- **The UI.** A Roles page creates a role from an app, a name and an optional description. A user's page assigns
+  roles, grouped by app. The welcome screen asks for an email, a username and a password; a name is optional.
 
 ## Files
 
@@ -210,8 +221,8 @@ stack does for you.
 
 Do this before anything real is stored. A dump kept only on `<BOX>` is lost with it -- and if `<BOX>` is
 also where your other backups land, losing it loses both. The database is not just the roster and the role
-assignments: it also holds usr's **JWT signing key** (the `app_settings` row, section `jwt`; usr generates
-it on first use and loads it from there afterwards -- `src/server/lib/jwt.ts:104-122`). Lose the database
+assignments: it also holds usr's **JWT signing key** (usr generates it on first use and loads it from the
+database afterwards, as described above). Lose the database
 and usr mints a new key, so every identity cookie already issued stops verifying as soon as a consumer
 refetches the JWKS. A dump therefore also holds the signing key -- treat it as a secret.
 
@@ -257,29 +268,23 @@ curl -s https://<USR_HOSTNAME>/.well-known/jwks.json | node -e "let s='';process
 
 ### 7. The welcome screen: the initial admin and the break-glass credentials
 
-> **Until this step is done usr is in open mode: every request that reaches it is a root identity**
-> (`src/server/lib/auth.ts:199-210`). Access is the only thing in front of it. Do this right after step 6
-> and before any app is pointed at usr.
+> **Until this step is done usr is in open mode: every request that reaches it is a root identity.** Access is
+> the only thing in front of it. Do this right after step 6 and before any app is pointed at usr.
 
-Open `https://<USR_HOSTNAME>/` in a browser (through Access). `GET /api/auth/status` reports
-`setupRequired: true` and the SPA shows the welcome screen: enter an email, a username and a password (a
-name is optional). That creates the initial admin -- a real user holding the seeded `usr:admin` role -- and the
-**break-glass local credentials** linked to it. **Record the break-glass credentials in your password
-manager, never in a file, a ticket, or a chat.** Afterwards setup is closed (`POST /api/auth/setup` is a
-`400` once configured) and usr is no longer in open mode.
+Open `https://<USR_HOSTNAME>/` in a browser (through Access). With no users and no credentials yet, usr shows
+the welcome screen: enter an email, a username and a password (a name is optional). That creates the initial
+admin -- a real user holding the seeded `usr:admin` role -- and the **break-glass local credentials** linked
+to it. **Record the break-glass credentials in your password manager, never in a file, a ticket, or a chat.**
+Afterwards setup is closed (a second attempt is refused) and usr is no longer in open mode.
 
 ### 8. Roles: `ac:admin` and `ac:viewer`
 
-Apps are just string namespaces (no registration), so `ac` exists once a role names it. In usr's UI
-(the Roles page, `#/roles`), create two roles: app `ac`, names `admin` and `viewer` (names must match
-`^[a-z0-9][a-z0-9._-]{0,63}$`). Then open your own user (Users page, `#/users/<uuid>`) and tick `ac:admin`
-in its per-app role list. If you do it by API
-instead (`POST /api/roles` with `{"app":"ac","name":"admin"}`, a repeat is a `400` "already exists";
-`PUT /api/users/<user uuid>/roles` with `{"roleIds":[...]}`): that `PUT` **replaces the user's whole role
-set**, so include `usr:admin`'s id as well (`GET /api/roles?app=usr`) or you drop it.
+Apps are just string namespaces (no registration), so `ac` exists once a role names it. In usr's UI, on the
+Roles page, create two roles: app `ac`, names `admin` and `viewer`. Then open your own user's page and tick
+`ac:admin` in its per-app role list. Assigning roles **replaces the user's whole role set**, so leave
+`usr:admin` ticked as well or you drop it.
 
-Check: `GET /api/roles?app=ac` (as admin) lists `admin` and `viewer`, and your user's roles include
-`ac:admin`.
+Check: the Roles page lists `ac:admin` and `ac:viewer`, and your user shows `ac:admin` as well as `usr:admin`.
 
 ### 9. Verify from the consumer
 
@@ -337,8 +342,10 @@ reason to.
 
 - **Verified here:** the compose file parses as YAML, and (at authoring time, by a throwaway script -- not a
   committed test; this repo has no CI) every `${VAR}` it uses is defined in `.env.example`, `usr` has no
-  `depends_on` and publishes no port, and the variable names node-app's scripts read are present; every statement about usr's behaviour is cited to its source
-  at the commit above and was read there; every statement about the shape is checked against
+  `depends_on` and publishes no port, and the variable names node-app's scripts read are present; every
+  statement about usr's behaviour was read from its source at the commit above and checked by an independent
+  audit (the file-and-line citations are deliberately not published here, as this repo is public); every
+  statement about the shape is checked against
   `servers/node-app/` at this repo's `297bcf1` (the scripts are reused unchanged, and `config --images usr`
   returning a single image without `depends_on` was **read from `docker/compose`'s source**, not run);
   the `cloudflared` behaviours in step 2 were read from its source.
