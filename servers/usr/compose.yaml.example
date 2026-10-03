@@ -45,12 +45,14 @@ services:
     # to compare from `docker compose config --images usr` and takes the FIRST line; compose includes a
     # selected service's dependencies in that output, in no guaranteed order, so a dependency would make
     # the script compare postgres's image on some runs and recreate usr for nothing. Postgres not being
-    # ready at first boot is harmless: usr's migrations fail on the refused connection, the process
+    # ready at first boot is harmless to usr: its migrations fail on the refused connection, the process
     # exits, and `restart: unless-stopped` starts it again (usr's own compose only waits for
-    # `service_started`, so it already relies on the same retry).
+    # `service_started`, so it already relies on the same retry). It is not harmless to the first `up`:
+    # the cloudflared sidecar below waits for usr to be healthy, and compose gave up on that while usr
+    # was restarting on the first rollout (README step 4: run `up` again once usr is healthy).
     # The image ships no HEALTHCHECK. `GET /api/health` answers {"ok":true} without authentication.
-    # `node` is already in the image, so no curl/wget is assumed; the long start_period covers the
-    # migrations that run at boot.
+    # `node` is already in the image, so no curl/wget is assumed; the start_period is meant to cover the
+    # migrations that run at boot against a ready database (the first boot is README step 4's case).
     healthcheck:
       test:
         - CMD
