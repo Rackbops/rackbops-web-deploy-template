@@ -4,8 +4,9 @@
 centralized users, app-scoped roles, and a cross-app SSO cookie that sibling apps verify offline against
 its JWKS. This directory runs it the way [`../node-app/`](../node-app/README.md) runs any container app --
 a built image, a per-app `cloudflared` token-tunnel sidecar, **no host port**, a deploy timer -- plus the
-two things node-app does not cover: **a Postgres beside the app**, and **an Access bypass scoped to exactly
-one path** (the JWKS). **Read node-app's README first**; this one only says what differs, and reuses
+two things node-app does not cover: **a Postgres beside the app**, and **an Access bypass whose destination
+is exactly one path** (the JWKS; Cloudflare applies it as a prefix, and the origin's validated rule covers
+what lies below it: inferred, step 1b). **Read node-app's README first**; this one only says what differs, and reuses
 node-app's `publish/` scripts unchanged rather than copying them (a copy would drift from the #108 fix
 and from the tunnel-token helper's hardening).
 
@@ -85,14 +86,21 @@ only destination is the single path `<USR_HOSTNAME>/.well-known/jwks.json`, with
 specific rule takes precedence" ([Access application paths](https://developers.cloudflare.com/cloudflare-one/access-controls/policies/app-paths/),
 read 2026-10-02), so this path is bypassed and everything else on the hostname stays behind app 1a. (That
 page's own example is `/eng` against `/eng/exec`; a hostname-wide app against a path app is the same rule
-applied, which is **inferred** -- step 6's probes are what prove it.)
+applied, and the first rollout's step 6 probes confirmed it, 2026-10-02/03.)
 
-**The bypass is exactly `/.well-known/jwks.json`, nothing wider.** Do not widen the destination (no
-`/.well-known/*`, no wildcard host). The closed-door `302` on `/` in step 6 is the check that nothing else
-is bypassed. Cloudflare's page also says a path with no rule of its own "will inherit any rules set for" its
-parent, so whether the bypass app reaches below the exact path (`.../jwks.json/x`) is **unknown**; the
-origin-side ingress rule in step 2 is anchored to the exact path, so even if it did, nothing but the JWKS
-gets through, and step 6 probes that path too.
+**The bypass app's destination is exactly `/.well-known/jwks.json`, nothing wider.** Do not widen it (no
+`/.well-known/*`, no wildcard host). Cloudflare's page also says a path with no rule of its own "will inherit any rules set for" its
+parent, and the first real rollout (2026-10-02/03) showed what that means here: **Cloudflare applies the path
+app as a prefix.** A request to `.../jwks.json/x` passes Access under the bypass, and the `403` it gets fits
+one reading: it reaches the tunnel, matches no JWKS rule there (step 2's regex is anchored to the exact
+path), falls to the hostname-wide validated rule, and is refused by it. That reading is **inferred** from the
+response, not read from a log: the rollout recorded the status, and a re-probe on 2026-10-03 saw an
+empty-bodied `403` with no Access headers (an Access or WAF refusal normally carries an HTML page; not
+documented here), which is the bare refusal `cloudflared`'s source gives a request with no Access JWT. So,
+on that reading, the exact-path property holds at
+the origin rule, not at Access: the closed-door `302` on `/` in step 6 checks that nothing beside the path is
+bypassed, and the `/x` probe checks what lies below it. That `403` is the expected answer, not something to
+fix: the destination is already the exact path.
 
 ### 2. Tunnel and DNS
 
@@ -134,8 +142,9 @@ refused with a bare `403` (`cloudflared` logs the reason "no access token in req
 the status), rules match on `hostname` and a **regex** `path`, the first match wins, and the validator is
 attached per rule. A request let through by the Bypass policy is not
 authenticated, so it carries no Access JWT (**inferred** -- Cloudflare's documentation does not say either
-way); on the hostname-wide rule it would be refused `403` at the origin side and the consumer would never
-get the keys. The JWKS-only rule (an anchored regex, so nothing else matches it) lets exactly that path
+way, and the first rollout's `/x` probe, an empty `403` that fits the hostname-wide rule's refusal, behaves
+that way without proving it: the response's origin was not captured); on the hostname-wide rule it would be refused `403` at
+the origin side and the consumer would never get the keys. The JWKS-only rule (an anchored regex, so nothing else matches it) lets exactly that path
 through, and every other path is still validated at the origin. Step 6's `200` on the JWKS URL is the proof;
 a `403` there means this rule is missing, misordered, or carries an `access` block. As in the gate runbook,
 the ingress `PUT` replaces the whole array, and read it back afterwards -- but note that the gate runbook's
@@ -192,11 +201,22 @@ docker compose ps           # usr and postgres both "healthy"; cloudflared up
 ```
 
 `usr` runs its migrations at boot, so the first start takes a little while (the healthcheck's
-`start_period` is 30 s) and may restart once or twice while Postgres is still initialising its data
-directory: a refused connection fails the migrations, the process exits, and `restart: unless-stopped`
-starts it again. `usr` deliberately has no `depends_on: postgres` (see the compose file for why: node-app's
+`start_period` is 30 s) and may restart a few times (three, on the first rollout) while Postgres is still
+initialising its data directory: a refused connection fails the migrations, the process exits, and
+`restart: unless-stopped` starts it again. `usr` deliberately has no `depends_on: postgres` (see the compose file for why: node-app's
 `deploy-pull.sh` reads `docker compose config --images usr` and must see exactly one image -- **do not add
-one**). Postgres's data should now be under `/opt/usr/postgres` in a version subdirectory.
+one**). Postgres's data is now under `/opt/usr/postgres/18` (the `18/` subdirectory appeared under the bind
+mount on the first real rollout, 2026-10-02/03; the directory's ownership was not reported, see the
+verification section).
+
+**Expect the first `up` to stop short of the sidecar.** `cloudflared` has `depends_on: usr:
+condition: service_healthy`, and while usr is restarting against a Postgres that is still initialising, compose
+gives up on the dependency and aborts with `dependency failed to start: container usr is unhealthy`
+(on the first rollout usr restarted three times first). Only the sidecar is left unstarted (what compose did
+start is expected to stay up under `restart: unless-stopped`; the rollout reported only the abort and the
+second `up`). Wait until `docker compose ps` shows `usr` healthy, then run
+`docker compose --profile tunnel up -d` once more, and it comes up. (A longer `start_period` for usr in
+`compose.yaml` should avoid the abort; untested. The second `up` costs nothing.)
 
 Then the image auto-swap, which is node-app's, used as is ([its section](../node-app/README.md#the-deploy-pull-timer-image-auto-swap)).
 Run this block from your clone of this repo again (the commands above ended in `/opt/stacks/usr`).
@@ -236,12 +256,19 @@ refetches the JWKS. A dump therefore also holds the signing key -- treat it as a
     && mv <STAGING_DIR>/usr-$(date +%F).dump.partial <STAGING_DIR>/usr-$(date +%F).dump
   ```
 
-  (`pg_dump` runs inside the container over its local socket, so it needs no password -- **inferred**
-  from the image's documented default of trusting local connections; step 6's restore-list check is what
-  proves it.) In a systemd unit a literal `%` must be written `%%`; a script file avoids that.
+  (`pg_dump` runs inside the container over its local socket, so it needs no password: the image trusts local
+  connections, and the first real rollout's dump confirmed it.) In a systemd unit a literal `%` must be written
+  `%%`; a script file avoids that.
 - **Destination: a host other than `<BOX>`, your choice** (`<BACKUP_HOST>`), shipped by whatever backup path
   you already run. Which host and how are an operator decision this repo does not make.
 - **Retention** is yours too; a dump is small, but it is a copy of identity data.
+- **One shape that is in use** (the first rollout, 2026-10-02/03), for when you have no backup path yet: the
+  timer on `<BOX>` writes the dump into `<STAGING_DIR>` owned by root and readable by a dedicated backup group
+  (files `0640`, a few days kept); `<BACKUP_HOST>` pulls it on its own timer an hour later with a key of its
+  own, which `<BOX>` restricts to that one directory with a forced command (`rrsync -ro <STAGING_DIR>` on a
+  dedicated account), and keeps a longer window there. `<BOX>` holds no outbound key, so it holds no
+  credential for the copies. Check the restriction before trusting it: from `<BACKUP_HOST>`, an arbitrary
+  command, a write, and a read outside `<STAGING_DIR>` must each be refused.
 
 ### 6. Verify
 
@@ -251,16 +278,18 @@ From a session with **no Access cookie** (not logged in), and **before** anythin
 curl -s -o /dev/null -w "%{http_code}\n" https://<USR_HOSTNAME>/                              # 302 -- the door is shut
 curl -s -o /dev/null -w "%{http_code}\n" https://<USR_HOSTNAME>/api/health                    # 302 -- not bypassed either
 curl -s -o /dev/null -w "%{http_code}\n" https://<USR_HOSTNAME>/.well-known/jwks.json         # 200 -- the one bypass
-curl -s -o /dev/null -w "%{http_code}\n" https://<USR_HOSTNAME>/.well-known/jwks.json/x       # 302 (or 403) -- never 200
+curl -s -o /dev/null -w "%{http_code}\n" https://<USR_HOSTNAME>/.well-known/jwks.json/x       # 403 -- never 200 (see below)
 curl -s https://<USR_HOSTNAME>/.well-known/jwks.json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).keys.length))"   # 1
 ```
 
 - The `302`s are the closed door ([`gate/README.md` step 2](../../gate/README.md#2-verify--the-closed-door-probe)):
   inspect the `Location` of the first and confirm it names `<USR_HOSTNAME>`. A `200` on `/` is a failed
-  rollout -- stop. **The bypass is exactly `/.well-known/jwks.json`**, so everything but that path must
-  `302`; this is the check. The `/x` probe just below the JWKS path should `302` too; a `403` there means
-  Cloudflare's bypass app reached below the exact path and the origin-side rule refused it -- nothing is
-  exposed, but narrow the bypass app's destination. A `200` there is a failed rollout.
+  rollout -- stop. **The bypass app's destination is exactly `/.well-known/jwks.json`**, so every path not
+  under it must `302`; this is the check for everything beside the path. The `/x` probe just below the JWKS
+  path answers `403`: Cloudflare applies the bypass app as a prefix (step 1b), so the request passes Access
+  and is refused `403` at the origin, by the hostname-wide validated rule as far as the response shows
+  (inferred, step 1b). That is the expected result and nothing is exposed; the destination is already the
+  exact path. A `200` there is a failed rollout.
 - The JWKS must be `200` with **one** key. (The first request is what generates and stores the key, so
   this is also the first use.) A `403` means the origin-side check refused it -- see step 2's JWKS rule.
 - **The first dump exists on the destination**, is non-empty, and lists cleanly:
@@ -313,7 +342,8 @@ The password in `.env` only takes effect when the data directory is first initia
 `POSTGRES_PASSWORD` later makes usr's `DATABASE_URL` stop matching the database, and usr cannot connect.
 To change it for real, set the new password in the database first
 (`docker compose exec postgres psql -U usr -d usr -c "ALTER USER usr PASSWORD '<new>'"`; it connects over the
-container's local socket, the same **inferred** no-password path as the dump in step 5), then in `.env`,
+container's local socket, the same connection the dump in step 5 uses, which the rollout confirmed needs no
+password for `pg_dump`; `psql` itself was not run, so for it this is still **inferred**), then in `.env`,
 then `docker compose --profile tunnel up -d`.
 
 ## Removing
@@ -349,10 +379,22 @@ reason to.
   `servers/node-app/` at this repo's `297bcf1` (the scripts are reused unchanged, and `config --images usr`
   returning a single image without `depends_on` was **read from `docker/compose`'s source**, not run);
   the `cloudflared` behaviours in step 2 were read from its source.
-- **Not verified -- no real rollout has run yet:** `docker compose config` itself (no Docker on the machine
-  this was written on), any of steps 1-9 on a real box and a real Cloudflare account, the bind-mounted data
-  directory's ownership on first boot (`postgres` creates its own `18/` subdirectory under it -- **unknown**
-  until step 4 shows it), that `pg_dump` over the container socket needs no password (**inferred**), that a
-  Bypass-policy request carries no Access JWT (**inferred**), and whether the bypass app reaches below the
-  exact JWKS path (**unknown**; the `/x` probe in step 6 answers it). Per [`CLAUDE.md`](../../CLAUDE.md), a
-  green parse is not proof the deploy works; the first real consumer's run is.
+- **Verified by the first real rollout (2026-10-02/03, the consumer named in `CONTEXT.md`'s Known
+  consumers):** steps 1-9 on a real box and a real Cloudflare account (with the exceptions below), and with
+  them some of what this section used to list as unknown or inferred: the data directory appears as `18/`
+  under the bind mount; `pg_dump` over the container socket needs no password; the bypass app reaches below
+  the exact JWKS path (Cloudflare applies it as a prefix), and the `/x` probe answers `403` (the rollout
+  recorded the status; a re-probe on 2026-10-03 saw an empty body and no Access headers). The two findings
+  that changed this runbook came from
+  the same run: the first `up` aborting on the sidecar's dependency (step 4), and the `/x` probe's `403`
+  being the expected result rather than a reason to narrow the bypass (steps 1b and 6).
+- **Still inferred:** that the `/x` `403` comes from the hostname-wide validated rule refusing a request
+  with no Access JWT, and so that a Bypass-policy request carries none. The status and the empty body fit
+  `cloudflared`'s source; nothing captured the response's origin or a `cloudflared` log line.
+- **Still not verified:** the data directory's ownership on first boot (the rollout reported the `18/`
+  directory, not its owner); step 3's registry fill and step 4's `docker login` line as written (the
+  rollout's box already held a registry login, so `REGISTRY_USER`/`REGISTRY_TOKEN` stayed empty and
+  `deploy-pull.sh` skipped its login); the container-lockdown check above (nobody has run usr under a
+  read-only root filesystem); and anything about a second rollout: one run proves the runbook once, on one
+  account's settings. Per [`CLAUDE.md`](../../CLAUDE.md), a green parse is not proof the deploy works; a
+  real run is, and this one has been.
