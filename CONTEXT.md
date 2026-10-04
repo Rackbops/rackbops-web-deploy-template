@@ -63,16 +63,6 @@ still resolve by GitHub's owner redirect, but `Rackbops/...` is canonical.)
   and the tunnel id were hardcoded there; both are now operator-set), independently hardened
   during `Rackbops/Tooling#776`'s own review gate to stop passing the token through an external
   command's argv (`awk -v`) -- a leak the live helper this was genericized from still has.
-- **`Lepid-Labs/usr`** (private, a different org's repo) at commit
-  `bffa881ffaff25b67e93e6aa5d190fbe43bb7ed1` (`main`'s head on 2026-09-26, the last push before the
-  2026-09-29 read that `Rackbops/artifact-console#101`'s plan took its facts from; that plan names no SHA,
-  so this is the pin) -- source of every claim about **usr** in `servers/usr/` (image, port, healthcheck,
-  JWKS, SSO, first-run open mode, roles, the Postgres volume), stated in that README **without** that private
-  repository's file paths or line numbers (this repo is public; they were read and audited at the pin). Unlike
-  the entries above, **nothing here was extracted from a running deployment**: `servers/usr/` is
-  `servers/node-app/`'s shape applied to usr's own `docker-compose.yml`, plus the JWKS-bypass ingress rule
-  derived from `cloudflared`'s source (see Confirmed facts). Where the scaffold and a real rollout ever
-  diverge, the rollout wins.
 
 Where a scaffold and its source ever diverge, the **source's** proven behavior wins -- re-genericize
 from it rather than editing the `.example` free-hand.
@@ -125,10 +115,10 @@ from it rather than editing the `.example` free-hand.
   `ingress/ingress.go`: the validator is attached per rule, `path` is
   compiled with `regexp.Compile`, `FindMatchingRule` returns the first match), `master`, 2026-10-02 -- not
   from a live tunnel. Cloudflare's own documentation describes `access` only as requiring `cloudflared` to
-  validate the JWT "prior to proxying" and does not give the status. This is why `servers/usr/README.md`
-  step 2 puts an Access **Bypass** path (usr's JWKS) behind its own `access`-less ingress rule ahead of the
-  hostname's validated one. The other half -- that a request let through by a Bypass policy carries no
-  Access JWT -- is **inferred**, not documented. **Date-sensitive:** `cloudflared`'s behaviour changes
+  validate the JWT "prior to proxying" and does not give the status. This is why the retired `servers/usr/`
+  runbook (removed 2026-10-04; last in `0a77e68`) put an Access **Bypass** path behind its own `access`-less
+  ingress rule ahead of the hostname's validated one. The other half -- that a request let through by a
+  Bypass policy carries no Access JWT -- is **inferred**, not documented. **Date-sensitive:** `cloudflared`'s behaviour changes
   between releases; re-check before relying on it.
 - **`docker compose config --images <service>` includes that service's dependencies, in no guaranteed
   order -- and node-app's `deploy-pull.sh` takes the FIRST line.** Read from `docker/compose`
@@ -138,8 +128,9 @@ from it rather than editing the `.example` free-hand.
   assumes "one line for one service", which holds only while the app service has no `depends_on`: one with a
   dependency can have the script compare the dependency's image instead and recreate the app spuriously on
   some ticks. `deploy-pull.test.sh` stubs `config --images` as a single line, so nothing tests it.
-  `servers/usr/` therefore gives `usr` no `depends_on`; **node-app's script itself is unchanged here** -- a
-  fix is its own change to the proven script, not folded into a consumer's scaffold.
+  The retired `servers/usr/` scaffold (last in `0a77e68`) therefore gave its app no `depends_on`; **node-app's
+  script itself is unchanged** -- a fix is its own change to the proven script, not folded into a consumer's
+  scaffold.
 - **The publish-scp connection/copy cost is by design -- #67 weighed three reductions and kept the
   proven shape.** The four connections a publish opens (staging setup, transfer, swap, cleanup) are
   enumerated in the scaffold itself (`publish-scp.ps1.example:69-71`; the calls are at `:197`/`:204`/
@@ -177,7 +168,7 @@ real box and the *shared* gate proves that piece end-to-end.
 | `Rackbops/artifact-console` | **node-app** | pull (`deploy-pull` timer, image-digest diff) | **Source of `node-app`.** The tier genericizes its **container contract** (image `ghcr.io/rackbops/artifact-console`, port 8787, three named volumes config/state/store) from artifact-console's shipped `deploy/`, plus its **#23 pull-deploy design** (the digest-diff `deploy-pull` swap) and **std-lib's token-sidecar** tunnel -- the pull/sidecar are not in that shipped `deploy/`, which still builds locally. Uses the token-sidecar, not the shared loopback-bound `gate/`. Going live on nucbox is pending (`artifact-console#23`'s apply). |
 | `Rackbops/kenzen` | **node-app** | pull (`deploy-pull` timer, image-digest diff) | **Live on nucbox** (`Tooling#479`), and **source of `node-app/ci/`** -- `release.yml.example` and `image-ratchet.md` (`Tooling#511`) genericize Kenzen's own `.github/workflows/{release,image-ratchet}.yml`, the multi-arch-build-on-tag and build-real-image-and-assert shapes `artifact-console`'s own `deploy/` doesn't carry a CI-workflow analog for. Same token-sidecar tunnel as `artifact-console`'s row above. |
 | `Rackbops/discord-mcp` | **node-app**, no-Access variant | pull (`deploy-pull` timer, image-digest diff) | **Live on nucbox** at `mcp.rackbops.com` (`Tooling#758`), and **source of the no-Access variant section + the container-lockdown section + `set-tunnel-token.sh.example`.** No Access application -- the service's own bearer auth, a Host/Origin allowlist, and a Free-plan rate-limit rule front it instead. Same token-sidecar tunnel as the rows above. `ReadonlyRootfs=true`/`CapDrop=[ALL]`/`NoNewPrivs=1` were verified live before the deployment went public (#758); the lockdown section's remaining fields (read-only config mount, sidecar lockdown, pinned sidecar tag, log caps) landed later via `Tooling#775` (merged `discord-mcp#19`) and are also now confirmed live on nucbox as of 2026-09-27. |
-| `Lepid-Labs/usr` (via `Rackbops/artifact-console#101`) | **node-app** shape + a Postgres beside it | pull (`deploy-pull` timer, node-app's scripts **unchanged**) | **Live** (rollout 2026-10-02/03). [`servers/usr/`](servers/usr/) is node-app's shape applied to usr's own `docker-compose.yml`, plus a runbook for an Access Bypass whose destination is one path (usr's JWKS) behind its own `access`-less ingress rule. Its first rollout was operator-run under `artifact-console#101` (all nine runbook steps, the acceptance pasted there), and fed two corrections back into the runbook: the first `up` aborts on the sidecar's `depends_on` while usr restarts during Postgres init (run `up` again), and Cloudflare applies the JWKS bypass app as a prefix, so the probe just below the exact path passes Access and is refused `403` at the origin by the hostname-wide validated rule (expected, nothing exposed; the exact-path property holds at the origin rule, and the `403`'s attribution is inferred from the response, per the Confirmed fact above). **Not a source of anything** -- unlike the rows above, nothing was extracted FROM a running usr (see Sources); the rollout proved the scaffold, it did not produce it. |
+| `Lepid-Labs/usr` (via `Rackbops/artifact-console#101`) | **node-app** shape + a Postgres beside it | pull (`deploy-pull` timer) | **Retired 2026-10-04.** Rolled out once (2026-10-02/03), then taken down when its consumer no longer needed it; `servers/usr/` was removed with it (last in `0a77e68`, recoverable from history). **Not a source of anything** -- nothing was extracted FROM a running usr. |
 
 **"image-digest diff" (the table's own shorthand for all four `deploy-pull` rows above) still
 holds after [#108](https://github.com/Rackbops/rackbops-web-deploy-template/issues/108), with one
