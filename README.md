@@ -17,7 +17,6 @@ the two runbooks (the gate, plus your chosen server).
   servers/
     nginx-static/           # base server: stock nginx serving static files  (BUILT)
     node-app/               # base server: a dynamic container app + per-app tunnel sidecar  (BUILT)
-    usr/                    # a project on node-app's shape: + a Postgres + a path-scoped Access bypass  (BUILT, rolled out once)
     (future siblings slot in here -- e.g. another static server)
   workers/
     file-issue/             # Cloudflare Worker: an Access-gated GitHub issue filer  (BUILT)
