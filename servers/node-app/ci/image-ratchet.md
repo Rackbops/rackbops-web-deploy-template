@@ -31,7 +31,7 @@ for the real-image half) -- itself the Kenzen-scoped heir of `Rackbops/artifact-
    needs) that curls/fetches what your app actually needs to prove, and fails loud with the
    container's logs on any timeout -- don't let a silent hang read as success.
 
-## The shape (from Kenzen's workflow, structure only -- adapt every specific)
+## The shape (structure from Kenzen's workflow, which now runs it on `ubuntu-latest` -- adapt every specific)
 
 ```yaml
 on:
@@ -44,6 +44,7 @@ concurrency:
 jobs:
   ratchet:
     runs-on: [self-hosted, docker]   # <-- swap for ubuntu-latest on a PUBLIC repo, see above
+    timeout-minutes: 15              # a pool slot is shared; GitHub's default is 360 minutes
     steps:
       - uses: actions/checkout@v4
       - name: Build the real image
@@ -77,4 +78,4 @@ wrong. Read Kenzen's real workflow file linked above for the complete, working v
 - [`release.yml.example`](release.yml.example) -- the sibling file that ships as a real template.
 - [`../README.md`](../README.md) -- the base `node-app` server tier this CI pattern deploys.
 - `Rackbops/Tooling` `docs/disposable-docker-ci-runners.md` -- the disposable runner pool, if
-  your app is private and wants the same shape Kenzen/artifact-console use.
+  your app is private and wants the same shape artifact-console uses.
