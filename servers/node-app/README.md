@@ -27,7 +27,7 @@ container port `8787`, three named volumes `config`/`state`/`store`. The concret
 | `publish/deploy-pull.service.example` | `/etc/systemd/system/<app>-deploy.service` | oneshot system unit, drops to `<user>` (must be in the `docker` group) |
 | `publish/deploy-pull.timer.example` | `/etc/systemd/system/<app>-deploy.timer` | polls the registry (`OnBootSec` + `OnUnitActiveSec`) |
 | `publish/set-tunnel-token.sh.example` | `/opt/stacks/<app>/deploy/set-tunnel-token.sh` | writes `CLOUDFLARE_TUNNEL_TOKEN` into `.env` from stdin, so the token never touches shell history or an agent's context -- see [The gate](#the-gate--a-per-app-token-tunnel-not-the-shared-host-tunnel) |
-| `ci/release.yml.example` | `.github/workflows/release.yml` | build + push the multi-arch image on a `v*` tag |
+| `ci/release.yml.example` | `.github/workflows/release.yml` | build + push the `linux/amd64` image on a `v*` tag |
 | `ci/image-ratchet.md` | (adapt, don't copy) | how to build the real image in CI and assert it boots -- see [Building and shipping the image](#building-and-shipping-the-image) |
 
 ## Bring it up on the box
@@ -225,7 +225,7 @@ loop for each version bump.
 
 Two pieces live under [`ci/`](ci/), factored out because they're proven CI, not the deploy shape
 above: [`release.yml.example`](ci/release.yml.example) (copy-and-fill-`<PLACEHOLDERS>`, builds
-and pushes the multi-arch image on a `v*` tag) and [`image-ratchet.md`](ci/image-ratchet.md) (a
+and pushes the `linux/amd64` image on a `v*` tag) and [`image-ratchet.md`](ci/image-ratchet.md) (a
 pattern to adapt, not a template -- building the real image in CI and asserting it actually boots
 catches a class of bug unit tests can't: something the build forgot to `COPY`, a path that only
 resolves in dev mode). Both are modeled on `Rackbops/kenzen`'s own workflows -- see `image-ratchet.md`
