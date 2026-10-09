@@ -165,12 +165,16 @@ services:
 ```
 
 The same block, minus the `tmpfs` line and the config mount (the sidecar has no `/config` and
-doesn't need `/tmp`), applies to the `cloudflared` sidecar too — plus **pin its image tag**
-(`cloudflare/cloudflared:20XX.X.X`, never `:latest`). A `:latest` sidecar never gets a fresh pull
-on its own: the deploy-pull timer below only ever pulls and recreates the **app** service, so an
-unpinned sidecar stays on whatever digest was current the day the stack first came up — no
-recurring pull ever revisits it. Pin it, and bump the pin by hand when you want a newer
-`cloudflared`.
+doesn't need `/tmp`), applies to the `cloudflared` sidecar too — plus **keep its image tag pinned**
+(`compose.yaml.example` ships `cloudflare/cloudflared:<version>`, never `:latest`). A `:latest` sidecar
+never gets a fresh pull on its own: the deploy-pull timer below only ever pulls and recreates the
+**app** service, so an unpinned sidecar stays on whatever digest was current the day the stack first
+came up — no recurring pull ever revisits it. And the tag is shared by every stack on the box: once
+any of them pulls a newer `cloudflared:latest`, the others' sidecars keep running the old image
+while their recorded tag names the new one, so `docker ps` shows them only as a bare image ID and
+says nothing about which release they run. Bump the pin in your repo's committed compose file
+(Renovate can raise that PR, see the comment on the line; with dependency-dashboard approval on,
+it waits for a tick there), then recreate the sidecar per [Updating](#updating).
 
 **Check first.** `read_only: true` fails closed the moment the app writes anywhere it isn't
 allowed to — including a place you didn't know it wrote to. Confirm the app writes only to its own
@@ -210,12 +214,39 @@ docker), this timer **runs docker** (login + `compose pull` + `up -d`), so `<use
 gets their image run on the box. Use a pinned `IMAGE_TAG` (not `latest`) if you want a human in the
 loop for each version bump.
 
+### Which tag the app runs
+
+`compose.yaml.example` falls back to `latest` when `IMAGE_TAG` is blank. Running `latest` is a
+deliberate choice with a cost, so make it on purpose and write it down where your deploy is
+documented:
+
+- **Track `latest`** when the release flow is the deploy: a `v*` tag pushes both `:<version>` and
+  `:latest`, the timer swaps the container within one poll, and something checks that the version
+  you released is the version running. The reference consumer does exactly that: artifact-console's
+  `scripts/release.mjs verify-deploy <v>` passes only once the container is running, healthy, and
+  its `/healthz` reports `<v>`, starting the deploy unit first when the box isn't there yet.
+- **Pin a version** when you want a human to approve each deploy, or nothing verifies what the
+  timer pulled. Set `IMAGE_TAG` to the released version and change the image line to
+  `${IMAGE}:${IMAGE_TAG:?IMAGE_TAG is unset or blank -- set it in .env}`, so a `.env` that lost the
+  tag refuses to start instead of quietly pulling `latest`. A new version then ships when you bump
+  `IMAGE_TAG` in `.env`: `deploy-pull.sh` re-reads the image ref on every run, so the timer's next
+  tick pulls the new tag and recreates the container (or run `docker compose up -d` yourself).
+  Until then the timer only restarts a stopped container, or swaps one whose pinned tag was
+  re-pushed.
+
+Either way the **sidecar** stays pinned (see [Container lockdown](#container-lockdown-recommended)):
+nothing verifies a `cloudflared` you didn't choose.
+
 ## Updating
 
 - **New image** (a new tag/digest published) → nothing to do by hand: the timer's next tick pulls it
   and recreates the container (or run `deploy/deploy-pull.sh` yourself). With a moving `:latest` this
   is automatic; with a pinned `IMAGE_TAG` bump `.env` first, then `docker compose up -d`.
 - **`compose.yaml`** → `docker compose --profile tunnel up -d`.
+- **The `cloudflared` pin** (bumped in your repo's committed compose) → copy the new line into the
+  box's `compose.yaml`, then `docker compose --profile tunnel pull cloudflared` and
+  `docker compose --profile tunnel up -d cloudflared`. The box's copy never changes on its own: it
+  follows the committed file only when someone copies the line in, as above.
 - **`.env`** → `docker compose --profile tunnel up -d` (recreates the app **and** the profiled
   cloudflared sidecar; a plain `up -d` wouldn't reach the sidecar, so a changed
   `CLOUDFLARE_TUNNEL_TOKEN` wouldn't apply).
