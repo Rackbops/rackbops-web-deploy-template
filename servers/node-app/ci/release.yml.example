@@ -1,14 +1,20 @@
 name: release
 
-# Build and publish the multi-arch container image on a version tag. Copy to
+# Build and publish the amd64 container image on a version tag. Copy to
 # .github/workflows/release.yml and fill the <PLACEHOLDERS>.
 #
-# ghcr.io/<owner>/<app>, multi-arch (amd64 + arm64), authenticated with the built-in
-# GITHUB_TOKEN (packages: write) -- no PAT needed. A GHCR package's org visibility is a one-time
-# setting applied AFTER the first publish (it cannot be set before the package exists).
+# ghcr.io/<owner>/<app>, linux/amd64 only (Rackbops/Tooling#1163: the fleet is x86_64 and nothing
+# pulls an arm64 image; an arm64 leg only ran under slow QEMU emulation), authenticated with the
+# built-in GITHUB_TOKEN (packages: write) -- no PAT needed. A GHCR package's org visibility is a
+# one-time setting applied AFTER the first publish (it cannot be set before the package exists).
 #
-# Runner: ubuntu-latest, not a self-hosted/disposable pool -- multi-arch buildx needs QEMU
-# emulation and reliable Docker-in-Docker, which GitHub-hosted runners provide out of the box.
+# Runner: ubuntu-latest as written, which is right for a PUBLIC repo. A PRIVATE repo with a
+# self-hosted Docker-in-Docker pool swaps it for `[self-hosted, docker]`, as Rackbops' private
+# repos do (artifact-console, research-triage, discord-mcp) -- never on a public repo; see
+# image-ratchet.md, "The runner". When you swap, also add a job-level `timeout-minutes` (30 covers
+# an image build): a self-hosted pool slot is shared, and GitHub's default is 360 minutes. No QEMU
+# step either way: the image is amd64-only, and on a privileged DinD runner setup-qemu would
+# register binfmt handlers in the host kernel.
 #
 # Reference consumer: Rackbops/kenzen's own .github/workflows/release.yml, which this file is
 # adapted from (Tooling#478 K4-6).
@@ -30,7 +36,7 @@ jobs:
     # Personal infra (publishes to ghcr.io/<owner>/<app>). Guarded so a fork tagging a `v*` skips
     # cleanly instead of fail-running a publish it has no rights for.
     if: github.repository == '<owner>/<app>'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest   # <-- [self-hosted, docker] on a PRIVATE repo with a DinD pool, see above
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,7 +46,6 @@ jobs:
         with:
           node-version: "24"
 
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
@@ -78,7 +83,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: |
             ghcr.io/<owner>/<app>:${{ steps.meta.outputs.version }}

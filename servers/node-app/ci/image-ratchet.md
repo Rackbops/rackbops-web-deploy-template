@@ -19,17 +19,19 @@ for the real-image half) -- itself the Kenzen-scoped heir of `Rackbops/artifact-
 1. **The runner.** Building a real image on every PR is expensive and, if you use a **self-hosted
    runner**, carries a real constraint: **never attach a self-hosted GitHub Actions runner to a
    PUBLIC repo** -- a runner is arbitrary code execution on whatever box it's attached to, and a
-   public repo means anyone who can open a PR can run code on your machine. Kenzen and
-   artifact-console are private repos on Rackbops' own disposable-runner pool
-   (`Rackbops/Tooling#393`/`#437`) for exactly this reason; a public repo needs `ubuntu-latest` (or
-   an equivalently sandboxed hosted runner) instead, at the cost of a slower/less-cached build.
+   public repo means anyone who can open a PR can run code on your machine. artifact-console is a
+   private repo and builds its ratchet on Rackbops' own self-hosted `docker` pool
+   (`Rackbops/Tooling#393`/`#437`); Kenzen started there too, but moved its ratchet to
+   `ubuntu-latest` when the repo went public, for exactly this reason. A public repo needs
+   `ubuntu-latest` (or an equivalently sandboxed hosted runner), at the cost of a slower,
+   less-cached build.
 2. **The assertion script.** What "works" means is app-specific -- Kenzen's checks `/healthz`
    plus that the SPA shell loads; yours might check a different endpoint, a expected response
    shape, or a specific error path. Write a small script (any language your image build already
    needs) that curls/fetches what your app actually needs to prove, and fails loud with the
    container's logs on any timeout -- don't let a silent hang read as success.
 
-## The shape (from Kenzen's workflow, structure only -- adapt every specific)
+## The shape (structure from Kenzen's workflow, which now runs it on `ubuntu-latest` -- adapt every specific)
 
 ```yaml
 on:
@@ -42,6 +44,7 @@ concurrency:
 jobs:
   ratchet:
     runs-on: [self-hosted, docker]   # <-- swap for ubuntu-latest on a PUBLIC repo, see above
+    timeout-minutes: 15              # a pool slot is shared; GitHub's default is 360 minutes
     steps:
       - uses: actions/checkout@v4
       - name: Build the real image
@@ -75,4 +78,4 @@ wrong. Read Kenzen's real workflow file linked above for the complete, working v
 - [`release.yml.example`](release.yml.example) -- the sibling file that ships as a real template.
 - [`../README.md`](../README.md) -- the base `node-app` server tier this CI pattern deploys.
 - `Rackbops/Tooling` `docs/disposable-docker-ci-runners.md` -- the disposable runner pool, if
-  your app is private and wants the same shape Kenzen/artifact-console use.
+  your app is private and wants the same shape artifact-console uses.
