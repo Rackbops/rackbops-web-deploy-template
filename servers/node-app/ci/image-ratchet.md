@@ -19,10 +19,12 @@ for the real-image half) -- itself the Kenzen-scoped heir of `Rackbops/artifact-
 1. **The runner.** Building a real image on every PR is expensive and, if you use a **self-hosted
    runner**, carries a real constraint: **never attach a self-hosted GitHub Actions runner to a
    PUBLIC repo** -- a runner is arbitrary code execution on whatever box it's attached to, and a
-   public repo means anyone who can open a PR can run code on your machine. Kenzen and
-   artifact-console are private repos on Rackbops' own disposable-runner pool
-   (`Rackbops/Tooling#393`/`#437`) for exactly this reason; a public repo needs `ubuntu-latest` (or
-   an equivalently sandboxed hosted runner) instead, at the cost of a slower/less-cached build.
+   public repo means anyone who can open a PR can run code on your machine. artifact-console is a
+   private repo and builds its ratchet on Rackbops' own self-hosted `docker` pool
+   (`Rackbops/Tooling#393`/`#437`); Kenzen started there too, but moved its ratchet to
+   `ubuntu-latest` when the repo went public, for exactly this reason. A public repo needs
+   `ubuntu-latest` (or an equivalently sandboxed hosted runner), at the cost of a slower,
+   less-cached build.
 2. **The assertion script.** What "works" means is app-specific -- Kenzen's checks `/healthz`
    plus that the SPA shell loads; yours might check a different endpoint, a expected response
    shape, or a specific error path. Write a small script (any language your image build already

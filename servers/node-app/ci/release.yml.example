@@ -11,8 +11,10 @@ name: release
 # Runner: ubuntu-latest as written, which is right for a PUBLIC repo. A PRIVATE repo with a
 # self-hosted Docker-in-Docker pool swaps it for `[self-hosted, docker]`, as Rackbops' private
 # repos do (artifact-console, research-triage, discord-mcp) -- never on a public repo; see
-# image-ratchet.md, "The runner". No QEMU step either way: the image is amd64-only, and on a
-# privileged DinD runner setup-qemu would register binfmt handlers in the host kernel.
+# image-ratchet.md, "The runner". When you swap, also add a job-level `timeout-minutes` (30 covers
+# an image build): a self-hosted pool slot is shared, and GitHub's default is 360 minutes. No QEMU
+# step either way: the image is amd64-only, and on a privileged DinD runner setup-qemu would
+# register binfmt handlers in the host kernel.
 #
 # Reference consumer: Rackbops/kenzen's own .github/workflows/release.yml, which this file is
 # adapted from (Tooling#478 K4-6).
