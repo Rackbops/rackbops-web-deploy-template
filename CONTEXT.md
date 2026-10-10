@@ -63,6 +63,17 @@ still resolve by GitHub's owner redirect, but `Rackbops/...` is canonical.)
   and the tunnel id were hardcoded there; both are now operator-set), independently hardened
   during `Rackbops/Tooling#776`'s own review gate to stop passing the token through an external
   command's argv (`awk -v`) -- a leak the live helper this was genericized from still has.
+- **`Rackbops/Tooling#902`** (2026-10-09) -- source of `servers/node-app/compose.yaml.example`'s
+  pinned `cloudflared` line and the server README's "Which tag the app runs". The pin re-genericizes
+  discord-mcp's own (`cloudflare/cloudflared:2026.9.3`, #775 above). The shared-`:latest` failure the
+  comment describes is from the reference box's `docker ps` read on 2026-10-08: three per-app
+  sidecars showed one bare image ID while another stack's sidecar showed `cloudflared:latest`. That
+  ID is the index digest Docker Hub lists for `cloudflared:2026.9.3`; `latest` moved to `2026.10.0`
+  on 2026-10-05 (both read from Docker Hub on 2026-10-09). So the three ran 2026.9.3 under a
+  recorded `:latest` that now named a newer image. Which pull moved the box's local tag wasn't
+  observed (**inferred**). The `latest`-tracking bullet describes artifact-console's `scripts/release.mjs`
+  (`cmdVerifyDeploy` / `deployVerdict`: running, healthy, and `/healthz` reporting the version) and
+  its `release.yml`, which pushes both `:<version>` and `:latest` on a `v*` tag.
 - **`servers/usr/` was removed on 2026-10-04.** It was `servers/node-app/`'s shape applied to
   `Lepid-Labs/usr` (a different org's private repo), plus a Postgres and a JWKS-bypass ingress rule, built
   for `Rackbops/artifact-console#101`. Its only deployment was torn down when usr left the plan, so the

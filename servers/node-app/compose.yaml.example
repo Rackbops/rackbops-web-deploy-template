@@ -22,6 +22,9 @@ services:
     # The published, versioned image. Use a MOVING tag (`:latest`) so publish/deploy-pull.sh swaps the
     # container when a new digest is pushed; pin `:vX.Y.Z` instead for a reproducible, manual-bump
     # deploy. Set both parts in .env (IMAGE, IMAGE_TAG) so deploy-pull.sh resolves the same ref.
+    # Tracking `latest` is a decision to record, not a default to fall into: see the server README's
+    # "Which tag the app runs". To pin, make a blank tag refuse to start instead of falling back to
+    # latest: `${IMAGE}:${IMAGE_TAG:?IMAGE_TAG is unset or blank -- set it in .env}`.
     image: ${IMAGE}:${IMAGE_TAG:-latest}
     container_name: <app>
     restart: unless-stopped
@@ -43,7 +46,15 @@ services:
     # Per-app token tunnel: confines this app's blast radius (its own tunnel + token), vs joining the
     # box's shared host tunnel. Ingress + Access are configured Cloudflare-side (the gate runbook);
     # this sidecar just runs the tunnel with the token.
-    image: cloudflare/cloudflared:latest
+    # Pinned to a cloudflared release, never :latest (Rackbops/Tooling#902). publish/deploy-pull.sh
+    # only pulls the app's image, so nothing re-pulls this one on a schedule. And `:latest` is one tag
+    # for the whole box: once any stack pulls a newer `cloudflared:latest`, every sidecar started from
+    # the old one keeps running it while its recorded tag names the new image, so `docker ps` shows it
+    # only as a bare image ID. Bump this line in the committed copy, then recreate the sidecar on the
+    # box (see the server README's Updating). If your repo runs Renovate, its docker-compose manager
+    # can raise that bump PR, as long as its config reads `compose*.yaml.example`
+    # (Rackbops/renovate-config#4 adds that pattern to the Rackbops org preset).
+    image: cloudflare/cloudflared:2026.9.3
     command: tunnel --no-autoupdate run
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
