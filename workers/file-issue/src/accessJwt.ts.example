@@ -6,8 +6,10 @@
  * missing for a request that somehow still arrives here.
  *
  * Every check, none skipped: the RS256 signature against the team's JWKS, `aud` equal to the
- * Access application's AUD tag, `iss` equal to the team domain, and `exp` in the future (`jose`'s
- * `jwtVerify` enforces `exp`/`nbf` by default; `issuer`/`audience` are passed explicitly below).
+ * Access application's AUD tag, `iss` equal to the team domain, and `exp` PRESENT and in the
+ * future. `jwtVerify` checks `exp`/`nbf` only when the claim is there, so a validly signed token
+ * with no `exp` at all would verify forever; `requiredClaims: ["exp"]` below is what refuses it.
+ * `issuer`/`audience` are passed explicitly.
  */
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
@@ -58,6 +60,7 @@ export async function verifyAccessJwt(token: string | null, teamDomain: string, 
       issuer: `https://${teamDomain}`,
       audience: aud,
       algorithms: ["RS256"],
+      requiredClaims: ["exp"],
     });
   } catch (err) {
     throw new AccessError(`invalid Access JWT: ${err instanceof Error ? err.message : String(err)}`);

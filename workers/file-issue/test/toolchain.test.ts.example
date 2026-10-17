@@ -214,6 +214,23 @@ describe("Worker GET /api/<FEATURE>/* read routes (#680)", () => {
     expect(body.issues).toBeNull();
   });
 
+  it("filed returns issues:null when the search 200 has no items array -- mutation guard: drop the shape check in searchOpenIssues and this fails", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    stubFetch(jwksResponseBody, {
+      [`${SEARCH_API_PREFIX}?q=${encodeURIComponent('repo:<STANDARD_REPO> is:issue is:open "<TITLE_PREFIX>" in:title')}&per_page=100`]:
+        () => new Response("{}", { status: 200 }),
+    });
+    const token = await signToken();
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(authedReq("/api/<FEATURE>/filed", token), env, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { issues: unknown };
+    expect(body.issues).toBeNull();
+  });
+
   it("standard passes the raw file through byte-for-byte", async () => {
     const { jwksResponseBody, signToken } = await makeAccessFixture();
     const raw = '{"hosts":{},"tools":{}}';

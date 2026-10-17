@@ -32,6 +32,30 @@ describe("validateFileIssueRequest", () => {
     );
   });
 
+  // These three use a concrete `Example: ` prefix, not <TITLE_PREFIX>: the mechanism only applies to
+  // a prefix that ends in `:`, and your own <TITLE_PREFIX> may not. parseCsvEnv trims
+  // `ALLOWED_TITLE_PREFIXES = "Example: "` to `Example:`, so the separating space has to be
+  // required again by the validator itself.
+  it("enforces a prefix ending in ':' with its separating space, as the var is written -- mutation guard: drop the re-added space and this fails", () => {
+    const trimmed = parseCsvEnv("Example: "); // exactly what the Worker hands the validator
+    expect(trimmed).toEqual(["Example:"]);
+    expect(() => validateFileIssueRequest({ ...VALID, title: "Example:x" }, trimmed)).toThrow(ValidationError);
+    expect(() => validateFileIssueRequest({ ...VALID, title: "Example:" }, trimmed)).toThrow(ValidationError);
+    expect(validateFileIssueRequest({ ...VALID, title: "Example: x" }, trimmed).title).toBe("Example: x");
+  });
+
+  it("names the prefix as enforced, space included, in the rejection", () => {
+    expect(() => validateFileIssueRequest({ ...VALID, title: "Example:x" }, ["Example:"])).toThrow(
+      '"title" must start with one of: "Example: "',
+    );
+  });
+
+  it("leaves a prefix that does not end in ':' exactly as configured -- mutation guard: add a space to every prefix", () => {
+    const req = { ...VALID, title: "Kenzen-sync2 nightly" };
+    expect(validateFileIssueRequest(req, ["Kenzen-sync"])).toEqual(req);
+    expect(() => validateFileIssueRequest({ ...VALID, title: "Kenzen-syn" }, ["Kenzen-sync"])).toThrow(ValidationError);
+  });
+
   it("rejects every title when ALLOWED_TITLE_PREFIXES is empty -- fail closed, not open", () => {
     expect(() => validateFileIssueRequest(VALID, [])).toThrow(ValidationError);
   });
@@ -67,6 +91,24 @@ describe("validateFileIssueRequest", () => {
     expect(() =>
       validateFileIssueRequest({ ...VALID, labels: ["chore", "arbitrary-label"] }, TOOLCHAIN_PREFIX),
     ).toThrow(ValidationError);
+  });
+
+  // labels.json declares `exclusive: ["priority", "effort"]`, so one issue never carries two labels
+  // from the same family. (Drop these two tests if your label source has no `exclusive` field.)
+  it("rejects two labels from one exclusive group, naming the group -- mutation guard: drop the exclusive loop and this fails", () => {
+    const req = { ...VALID, labels: ["chore", "priority: low", "priority: high"] };
+    expect(() => validateFileIssueRequest(req, TOOLCHAIN_PREFIX)).toThrow(
+      'labels ["priority: low","priority: high"] share the exclusive "priority" group; send one',
+    );
+  });
+
+  it("accepts one label per exclusive group, and the same label sent twice -- mutation guard: drop the Set dedupe and this fails", () => {
+    expect(validateFileIssueRequest({ ...VALID, labels: ["chore", "priority: low"] }, TOOLCHAIN_PREFIX).labels).toEqual([
+      "chore",
+      "priority: low",
+    ]);
+    const twice = { ...VALID, labels: ["priority: low", "priority: low"] };
+    expect(validateFileIssueRequest(twice, TOOLCHAIN_PREFIX).labels).toEqual(["priority: low", "priority: low"]);
   });
 
   it("rejects a non-object payload (array, null, primitive)", () => {

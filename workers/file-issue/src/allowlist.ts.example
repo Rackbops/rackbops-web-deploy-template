@@ -1,7 +1,9 @@
 /**
  * Input allowlist for `POST /api/file-issue` (<OWNER>/<REPO>#638, TC-8): a request must look
  * exactly like an allowed action filing, never an arbitrary issue an authenticated-but-untrusted
- * caller could use this Worker to create in an arbitrary repo.
+ * caller could use this Worker to create in an arbitrary repo: it names an allowed repo, carries
+ * a title under an allowed prefix, a non-empty body of at most 4000 characters and labels from the
+ * standard set (at most one per exclusive group).
  *
  * REPO-GENERIC BY DESIGN (<MAINTAINER> amendment, 2026-09-12): this Worker is not Tooling-only -- the
  * request itself names its target `repo`, checked against the server-side `ALLOWED_REPOS` Worker
@@ -41,11 +43,19 @@ interface LabelEntry {
 interface LabelsStandard {
   type: LabelEntry[];
   priority: LabelEntry[];
+  /** Label families (`"priority"`, `"effort"`) the standard calls single-select: consumers such as
+   * a label picker offer one `<group>: <value>` label per group. `sync_labels.py` ignores the field
+   * (it applies labels the same either way); this Worker is a consumer that enforces it, though
+   * only `priority` can occur here, since `effort:` labels are not in {@link ALLOWED_LABELS}.
+   * Optional: a label source without it enforces no group. */
+  exclusive?: string[];
 }
 
 const ALLOWED_LABELS: ReadonlySet<string> = new Set(
   [...(labelsStandard as LabelsStandard).type, ...(labelsStandard as LabelsStandard).priority].map((l) => l.name),
 );
+
+const EXCLUSIVE_GROUPS: readonly string[] = (labelsStandard as LabelsStandard).exclusive ?? [];
 
 const MAX_BODY_LENGTH = 4000;
 // GitHub itself caps an issue title at 256 characters; enforcing the same ceiling here means a
@@ -56,12 +66,22 @@ const MAX_TITLE_LENGTH = 256;
 /** Splits a Worker var's comma-separated value into trimmed, non-empty entries. An unset/empty
  * var parses to `[]` -- FAIL CLOSED: `assertRepoAllowed`/the title-prefix check in
  * {@link validateFileIssueRequest} then reject every request rather than silently allowing
- * everything when a var is missing. */
+ * everything when a var is missing. Trimming is also why a configured
+ * `ALLOWED_TITLE_PREFIXES = "<TITLE_PREFIX>"` that ends in `: ` arrives here without its trailing
+ * space; the validator puts the separating space back (see {@link effectivePrefix}). */
 export function parseCsvEnv(value: string | undefined): string[] {
   return (value ?? "")
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
+}
+
+/** A prefix as it is enforced. {@link parseCsvEnv} trims every entry, so a configured
+ * `"Label: "` reaches the validator as `"Label:"`; a prefix ending in `:` is a
+ * `Label: text` prefix whose separating space was trimmed away, and it is required again here --
+ * otherwise `Label:x` would pass a check configured as `Label: `. */
+function effectivePrefix(prefix: string): string {
+  return prefix.endsWith(":") ? `${prefix} ` : prefix;
 }
 
 /** Validates `payload` (already-parsed JSON) into a {@link FileIssueRequest}, or throws
@@ -79,10 +99,11 @@ export function validateFileIssueRequest(payload: unknown, allowedTitlePrefixes:
   if (typeof repo !== "string" || !REPO_RE.test(repo)) {
     throw new ValidationError('"repo" must be a string of the form "owner/name"');
   }
-  if (typeof title !== "string" || !allowedTitlePrefixes.some((prefix) => title.startsWith(prefix))) {
+  const prefixes = allowedTitlePrefixes.map(effectivePrefix);
+  if (typeof title !== "string" || !prefixes.some((prefix) => title.startsWith(prefix))) {
     throw new ValidationError(
-      allowedTitlePrefixes.length > 0
-        ? `"title" must start with one of: ${allowedTitlePrefixes.join(", ")}`
+      prefixes.length > 0
+        ? `"title" must start with one of: ${prefixes.map((p) => JSON.stringify(p)).join(", ")}`
         : '"title" is not allowed (ALLOWED_TITLE_PREFIXES is empty -- this Worker is configured to accept nothing)',
     );
   }
@@ -98,6 +119,15 @@ export function validateFileIssueRequest(payload: unknown, allowedTitlePrefixes:
   for (const label of labels) {
     if (typeof label !== "string" || !ALLOWED_LABELS.has(label)) {
       throw new ValidationError(`label ${JSON.stringify(label)} is not in the standard label set`);
+    }
+  }
+  // labels.json's `exclusive` families are single-select: GitHub would happily store `priority: low`
+  // AND `priority: high` on one issue, so the Worker refuses the pair rather than file it. The same
+  // label sent twice is one label, not two.
+  for (const group of EXCLUSIVE_GROUPS) {
+    const inGroup = [...new Set((labels as string[]).filter((l) => l.startsWith(`${group}: `)))];
+    if (inGroup.length > 1) {
+      throw new ValidationError(`labels ${JSON.stringify(inGroup)} share the exclusive "${group}" group; send one`);
     }
   }
 

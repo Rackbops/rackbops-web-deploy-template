@@ -18,6 +18,14 @@ const VALID_BODY = {
   labels: ["chore", "priority: low"],
 };
 
+// The configured title prefix, read back from VALID_BODY.title (everything before "upgrade") so the
+// tests below that need it don't carry a second literal you would have to edit.
+// Fails loudly here, not as a confusing 400 later, if your VALID_BODY.title has no "upgrade".
+// The 400 test below also assumes exactly one configured prefix (its message lists them all).
+const UPGRADE_AT = VALID_BODY.title.indexOf("upgrade");
+if (UPGRADE_AT < 0) throw new Error('VALID_BODY.title must contain "upgrade" after the title prefix');
+const TITLE_PREFIX = VALID_BODY.title.slice(0, UPGRADE_AT);
+
 // Every real caller is this site's own same-origin fetch(), which a browser marks with
 // `Sec-Fetch-Site: same-origin` itself -- default it here so every OTHER test isn't forced to
 // know about the cross-site check; the two tests for that check override/omit it explicitly.
@@ -122,6 +130,33 @@ describe("Worker fetch handler (#638)", () => {
     expect(res.status).toBe(400);
   });
 
+  // Assumes a `Label: ` style <TITLE_PREFIX> (ends in `: `); delete this test if yours does not.
+  it("400s a title that omits the space after the configured prefix, through the real ALLOWED_TITLE_PREFIXES -- mutation guard: drop the re-added space and this fails", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input) === certsUrl()) return new Response(jwksResponseBody, { status: 200 });
+        return new Response("unexpected fetch in this test: " + String(input), { status: 500 });
+      }),
+    );
+    const token = await signToken();
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      req("/api/file-issue", {
+        method: "POST",
+        headers: { "content-type": "application/json", "Cf-Access-Jwt-Assertion": token },
+        body: JSON.stringify({ ...VALID_BODY, title: TITLE_PREFIX.trimEnd() + "upgrade Python on MILE to 3.14" }),
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: `"title" must start with one of: ${JSON.stringify(TITLE_PREFIX)}` });
+  });
+
   it("403s when the repo is not in ALLOWED_REPOS and makes NO GitHub call -- mutation guard: remove the repo allowlist check and this fails", async () => {
     const { jwksResponseBody, signToken } = await makeAccessFixture();
     const githubCalls: string[] = [];
@@ -199,6 +234,111 @@ describe("Worker fetch handler (#638)", () => {
       existing: true,
     });
     expect(createCalls.length).toBe(0);
+  });
+
+  it("escapes a backslash as well as a quote in the dedupe search phrase -- mutation guard: put the quote-only escape back and this fails", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    const searchUrls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === certsUrl()) return new Response(jwksResponseBody, { status: 200 });
+        if (url.startsWith("https://api.github.com/search/issues")) {
+          searchUrls.push(url);
+          return new Response(JSON.stringify({ items: [] }), { status: 200 });
+        }
+        if (url === `https://api.github.com/repos/${VALID_BODY.repo}/issues` && init?.method === "POST") {
+          return new Response(
+            JSON.stringify({ number: 707, html_url: `https://github.com/${VALID_BODY.repo}/issues/707` }),
+            { status: 201 },
+          );
+        }
+        return new Response("unexpected fetch in this test: " + url, { status: 500 });
+      }),
+    );
+    const token = await signToken();
+
+    // The title carries a backslash followed by a quote: Foo\"Bar.
+    const title = TITLE_PREFIX + 'upgrade Foo\\"Bar on MILE to 1.0';
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      req("/api/file-issue", {
+        method: "POST",
+        headers: { "content-type": "application/json", "Cf-Access-Jwt-Assertion": token },
+        body: JSON.stringify({ ...VALID_BODY, title }),
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(201);
+    // In a quoted search phrase `\` is the escape character, so each of the two characters is
+    // escaped: the backslash becomes `\\` and the quote becomes `\"`.
+    expect(new URL(searchUrls[0] ?? "").searchParams.get("q")).toBe(
+      `repo:${VALID_BODY.repo} is:issue is:open in:title "${TITLE_PREFIX}upgrade Foo\\\\\\"Bar on MILE to 1.0"`,
+    );
+  });
+
+  it("502s, naming the shape problem, when the dedupe search returns a 200 without an items array -- mutation guard: drop the check in findExistingIssue and this fails", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === certsUrl()) return new Response(jwksResponseBody, { status: 200 });
+        if (url.startsWith("https://api.github.com/search/issues")) return new Response("{}", { status: 200 });
+        return new Response("unexpected fetch in this test: " + url, { status: 500 });
+      }),
+    );
+    const token = await signToken();
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      req("/api/file-issue", {
+        method: "POST",
+        headers: { "content-type": "application/json", "Cf-Access-Jwt-Assertion": token },
+        body: JSON.stringify(VALID_BODY),
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(502);
+    // Without the check the failure is still a GitHubError (the outer catch wraps a TypeError),
+    // but its message is a JS engine's "Cannot read properties of undefined" -- not this one.
+    expect(await res.json()).toEqual({ error: "GitHub search returned an unexpected shape" });
+  });
+
+  it("502s, not a 200 existing:true with no url, when a matching search entry lacks fields -- mutation guard: weaken findExistingIssue's check to Array.isArray and this fails", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === certsUrl()) return new Response(jwksResponseBody, { status: 200 });
+        if (url.startsWith("https://api.github.com/search/issues")) {
+          // The title matches; the entry has no html_url.
+          return new Response(JSON.stringify({ items: [{ number: 708, title: VALID_BODY.title }] }), { status: 200 });
+        }
+        return new Response("unexpected fetch in this test: " + url, { status: 500 });
+      }),
+    );
+    const token = await signToken();
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      req("/api/file-issue", {
+        method: "POST",
+        headers: { "content-type": "application/json", "Cf-Access-Jwt-Assertion": token },
+        body: JSON.stringify(VALID_BODY),
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: "GitHub search returned an unexpected shape" });
   });
 
   it("creates the issue and returns 201 when no existing match is found", async () => {
