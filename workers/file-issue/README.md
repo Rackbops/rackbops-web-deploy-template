@@ -84,7 +84,9 @@ from being *delivered*, only from being *read* by the calling page's JS).
   trailing space you write inside the quotes is trimmed away -- with one exception: a prefix
   ending in `:` is enforced with a following space (`allowlist.ts`'s `effectivePrefix`), so
   `"Toolchain: "` and `"Toolchain:"` both require `Toolchain: x` and refuse `Toolchain:x`. Any
-  other prefix is matched exactly as trimmed. Both vars
+  other prefix is matched exactly as trimmed. Upgrading a copy made before this rule: if your
+  prefix ends in `:` and your titles carry no space after it (`fix:x`), they are now refused --
+  check what your page sends. Both vars
   parse to an empty list when unset -- **fail closed**: an empty
   `ALLOWED_REPOS`/`ALLOWED_TITLE_PREFIXES` rejects every request, it does not silently allow
   everything.

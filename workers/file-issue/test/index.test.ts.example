@@ -20,7 +20,11 @@ const VALID_BODY = {
 
 // The configured title prefix, read back from VALID_BODY.title (everything before "upgrade") so the
 // tests below that need it don't carry a second literal you would have to edit.
-const TITLE_PREFIX = VALID_BODY.title.slice(0, VALID_BODY.title.indexOf("upgrade"));
+// Fails loudly here, not as a confusing 400 later, if your VALID_BODY.title has no "upgrade".
+// The 400 test below also assumes exactly one configured prefix (its message lists them all).
+const UPGRADE_AT = VALID_BODY.title.indexOf("upgrade");
+if (UPGRADE_AT < 0) throw new Error('VALID_BODY.title must contain "upgrade" after the title prefix');
+const TITLE_PREFIX = VALID_BODY.title.slice(0, UPGRADE_AT);
 
 // Every real caller is this site's own same-origin fetch(), which a browser marks with
 // `Sec-Fetch-Site: same-origin` itself -- default it here so every OTHER test isn't forced to
