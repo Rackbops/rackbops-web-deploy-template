@@ -48,6 +48,29 @@ async function readError(res: Response): Promise<string> {
   }
 }
 
+export interface SearchIssueItem {
+  number: number;
+  title: string;
+  html_url: string;
+}
+
+/** A search response's `items`, checked: an array whose every entry has the three fields the
+ * callers read. Anything else (a missing `items`, a `null` entry, an entry without a title) is
+ * a {@link GitHubError} at the call site, never a TypeError later on, outside its handlers. */
+function isSearchItems(x: unknown): x is SearchIssueItem[] {
+  return (
+    Array.isArray(x) &&
+    x.every(
+      (i: unknown) =>
+        typeof i === "object" &&
+        i !== null &&
+        typeof (i as SearchIssueItem).number === "number" &&
+        typeof (i as SearchIssueItem).title === "string" &&
+        typeof (i as SearchIssueItem).html_url === "string",
+    )
+  );
+}
+
 /** The open issue in `repo` whose title is EXACTLY `title` (a GitHub search match on its own is
  * only a candidate -- the API's `in:title` is a token match, not exact, so every result is
  * re-checked for byte-identical equality before being trusted, the same discipline the
@@ -72,14 +95,21 @@ export async function findExistingIssue(repo: string, title: string, token: stri
   try {
     // A literal `"` inside a deterministically-generated title should never happen (tool/host
     // names don't carry one), but escaping it defensively costs nothing and keeps the quoted
-    // phrase well-formed either way.
-    const escaped = title.replace(/"/g, '\\"');
+    // phrase well-formed either way. The backslash is escaped too, the conventional spelling next
+    // to an escaped quote: a title ending in `\` would otherwise read as escaping the closing quote.
+    // (GitHub's code-search docs describe a backslash escaping a quote and a backslash; its
+    // issue-search docs do not spell it out, so the test pins what is sent, not how GitHub
+    // parses it.)
+    const escaped = title.replace(/[\\"]/g, (c) => "\\" + c);
     const q = `repo:${repo} is:issue is:open in:title "${escaped}"`;
     const res = await fetch(`${API}/search/issues?q=${encodeURIComponent(q)}&per_page=100`, {
       headers: headers(token),
     });
     if (!res.ok) throw new GitHubError(`GitHub search failed: ${await readError(res)}`, res.status);
-    const data = (await res.json()) as { items: Array<{ number: number; html_url: string; title: string }> };
+    const data = (await res.json()) as { items?: unknown };
+    if (!isSearchItems(data.items)) {
+      throw new GitHubError("GitHub search returned an unexpected shape", res.status);
+    }
     const exact = data.items.find((i) => i.title === title);
     return exact ? { number: exact.number, url: exact.html_url } : null;
   } catch (err) {
@@ -88,7 +118,7 @@ export async function findExistingIssue(repo: string, title: string, token: stri
   }
 }
 
-/** Creates the issue via the REST API. Throws {@link GitHubError} on anything but 201 -- see
+/** Creates the issue via the REST API. Throws {@link GitHubError} on any non-OK response -- see
  * {@link findExistingIssue}'s docstring for why every failure shape, not just a non-OK
  * response, ends up as this one error type. */
 export async function createIssue(
@@ -162,17 +192,11 @@ export async function getRawFile(repo: string, path: string, token: string): Pro
   }
 }
 
-export interface SearchIssueItem {
-  number: number;
-  title: string;
-  html_url: string;
-}
-
 /** Every OPEN issue in `repo` whose title contains `titlePrefix`. `per_page=100` for the same
  * reason {@link findExistingIssue} uses it: a real match ranking outside the top handful on a
- * busy repo must still be found. Throws {@link GitHubError} on any failure; the caller (not this
- * function) decides that a filed-issues failure degrades to `issues: null` rather than a hard
- * error. */
+ * busy repo must still be found. Throws {@link GitHubError} on any failure, a 2xx whose `items` is
+ * not an array of issues included; the caller (not this function) decides that a filed-issues
+ * failure degrades to `issues: null` rather than a hard error. */
 export async function searchOpenIssues(repo: string, titlePrefix: string, token: string): Promise<SearchIssueItem[]> {
   try {
     const q = `repo:${repo} is:issue is:open "${titlePrefix}" in:title`;
@@ -180,7 +204,10 @@ export async function searchOpenIssues(repo: string, titlePrefix: string, token:
       headers: headers(token),
     });
     if (!res.ok) throw new GitHubError(`GitHub search failed: ${await readError(res)}`, res.status);
-    const data = (await res.json()) as { items: SearchIssueItem[] };
+    const data = (await res.json()) as { items?: unknown };
+    if (!isSearchItems(data.items)) {
+      throw new GitHubError("GitHub search returned an unexpected shape", res.status);
+    }
     return data.items;
   } catch (err) {
     if (err instanceof GitHubError) throw err;

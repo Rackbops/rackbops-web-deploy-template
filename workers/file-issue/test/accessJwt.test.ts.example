@@ -66,6 +66,15 @@ describe("verifyAccessJwt", () => {
     await expect(verifyAccessJwt(token, TEAM_DOMAIN, AUD)).rejects.toThrow(AccessError);
   });
 
+  it("rejects a validly signed token that carries no exp claim -- mutation guard: drop requiredClaims and this fails", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    stubJwks(jwksResponseBody);
+    const token = await signToken({ noExp: true });
+    // Named by its reason, so a rejection for some OTHER cause (a bad key, aud or iss) cannot
+    // satisfy this test while `requiredClaims` is gone.
+    await expect(verifyAccessJwt(token, TEAM_DOMAIN, AUD)).rejects.toThrow(/"exp" claim/);
+  });
+
   it("rejects a token signed by a DIFFERENT key than the one in the JWKS (a forged/unknown signer)", async () => {
     const legit = await makeAccessFixture();
     const forged = await makeAccessFixture();

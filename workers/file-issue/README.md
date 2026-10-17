@@ -79,17 +79,12 @@ from being *delivered*, only from being *read* by the calling page's JS).
   is meant to be reviewable in a PR diff.
 - **`ALLOWED_TITLE_PREFIXES`** -- comma-separated list of required title prefixes, applied to
   every repo in `ALLOWED_REPOS` alike. A request whose title doesn't start with one of these is
-  refused with a 400. **Matched as a literal string prefix, and any trailing space you include is
-  part of it.** `"repo:${repo} is:issue ..."` aside, this is a plain `String.startsWith` check: a
-  request title matches if it starts with the *exact characters* of one configured prefix, space
-  included. If your own title-generating code always writes a space after the prefix (as in
-  `"Toolchain: upgrade Cargo..."`), set the prefix here as `"Toolchain: "` (trailing space, inside
-  the quotes) to match what you actually intend the visible, human-facing prefix to be -- an
-  easy copy/paste mistake to drop, since a trailing space is invisible in most editors and this
-  file's own comments and PR/issue text can silently eat it. Dropping it doesn't reject anything
-  (a shorter prefix without the space still matches the same titles, since they still start with
-  those characters) -- it just means the configured value no longer matches what you can visibly
-  see as the intended prefix, which is confusing to debug later, not a runtime break. Both vars
+  refused with a 400. **Matched as a literal string prefix, after the comma-split trims each
+  entry** (`parseCsvEnv`). A request title matches if it starts with one configured prefix, so a
+  trailing space you write inside the quotes is trimmed away -- with one exception: a prefix
+  ending in `:` is enforced with a following space (`allowlist.ts`'s `effectivePrefix`), so
+  `"Toolchain: "` and `"Toolchain:"` both require `Toolchain: x` and refuse `Toolchain:x`. Any
+  other prefix is matched exactly as trimmed. Both vars
   parse to an empty list when unset -- **fail closed**: an empty
   `ALLOWED_REPOS`/`ALLOWED_TITLE_PREFIXES` rejects every request, it does not silently allow
   everything.
@@ -100,7 +95,11 @@ from being *delivered*, only from being *read* by the calling page's JS).
   `../../../labels.json` -- Tooling's own org-wide label standard, three directories up from
   where this file sits in that repo. You almost certainly don't have that file at that path;
   replace the import and `ALLOWED_LABELS`'s construction with your own label source (a hardcoded
-  array is fine if you don't have a shared org-wide label standard).
+  array is fine if you don't have a shared org-wide label standard). Tooling's `labels.json`
+  also carries `exclusive` (an array of label-family names such as `"priority"`): the validator
+  makes those families single-select, so a request carrying two different labels from one family
+  is a 400 (the same label twice counts as one). A label source without `exclusive` enforces no
+  group.
 - **The GitHub `User-Agent` string** in `src/github.ts` (`"tools-site-file-issue-worker"`) --
   cosmetic, but give it a name describing *your* Worker rather than leaving Tooling's.
 - **`wrangler.toml`'s second route** -- delete it if your site only has one hostname.
