@@ -66,7 +66,7 @@ still resolve by GitHub's owner redirect, but `Rackbops/...` is canonical.)
 - **`Rackbops/Tooling#902`** (2026-10-09) -- source of `servers/node-app/compose.yaml.example`'s
   pinned `cloudflared` line and the server README's "Which tag the app runs". The pin, as first
   written, re-genericized discord-mcp's own (`cloudflare/cloudflared:2026.9.3`, #775 above); the
-  example's tag has since been bumped by hand to `2026.10.1` (2026-10-19), and the rest of this bullet
+  example's tag has since been bumped by hand to `2026.10.1`, and the rest of this bullet
   describes the original `2026.9.3` pin. The shared-`:latest` failure the
   comment describes is from the reference box's `docker ps` read on 2026-10-08: three per-app
   sidecars showed one bare image ID while another stack's sidecar showed `cloudflared:latest`. That
