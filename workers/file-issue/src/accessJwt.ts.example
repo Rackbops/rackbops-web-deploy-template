@@ -11,7 +11,7 @@
  * with no `exp` at all would verify forever; `requiredClaims: ["exp"]` below is what refuses it.
  * `issuer`/`audience` are passed explicitly.
  */
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 
 export const ACCESS_JWT_HEADER = "Cf-Access-Jwt-Assertion";
 
@@ -47,21 +47,24 @@ export function _resetJwksCacheForTests(): void {
   jwksCache.clear();
 }
 
-/** Verifies `token` against `teamDomain`'s JWKS and `aud`, or throws {@link AccessError}. Never
- * returns a falsy/partial result on a bad token -- a verification failure is always an
- * exception, never a value the caller could mistake for success. */
-export async function verifyAccessJwt(token: string | null, teamDomain: string, aud: string): Promise<void> {
+/** Verifies `token` against `teamDomain`'s JWKS and `aud` and returns the verified payload, or
+ * throws {@link AccessError}. Never returns a falsy/partial result on a bad token -- a
+ * verification failure is always an exception, never a value the caller could mistake for
+ * success. The payload is what lets a caller ask WHO was admitted (`email`; a service token
+ * carries none), not just that Access admitted someone. */
+export async function verifyAccessJwt(token: string | null, teamDomain: string, aud: string): Promise<JWTPayload> {
   if (!token) throw new AccessError("no Cf-Access-Jwt-Assertion header");
   if (!teamDomain || !aud) {
     throw new AccessError("Worker misconfigured: ACCESS_TEAM_DOMAIN/ACCESS_AUD secret not set");
   }
   try {
-    await jwtVerify(token, jwks(teamDomain), {
+    const { payload } = await jwtVerify(token, jwks(teamDomain), {
       issuer: `https://${teamDomain}`,
       audience: aud,
       algorithms: ["RS256"],
       requiredClaims: ["exp"],
     });
+    return payload;
   } catch (err) {
     throw new AccessError(`invalid Access JWT: ${err instanceof Error ? err.message : String(err)}`);
   }

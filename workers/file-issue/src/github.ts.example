@@ -145,9 +145,10 @@ export async function createIssue(
 // The three calls below use GITHUB_CONTENTS_TOKEN (Contents: read on <OWNER>/<STORE_REPO>
 // + <STANDARD_REPO>, both private), a SEPARATE fine-grained PAT from GITHUB_TOKEN above (Issues
 // R/W on the ALLOWED_REPOS set) -- see README.md's token-hygiene section. Every failure here
-// becomes a GitHubError carrying only a status, never the upstream body: the caller maps that to
-// a fixed `{"error":"upstream"}` (or, for `filed` specifically, `issues: null`) rather than
-// echoing anything GitHub said, so a private repo's contents can never leak through an error
+// becomes a GitHubError carrying a status and a message (GitHub's own `message`, this module's
+// fixed text, or a local error's text). The caller logs it to console.warn and maps the failure
+// to a fixed `{"error":"upstream"}` (or, for `filed` specifically, `issues: null`); the message
+// is never put in a response, so a private repo's contents can never leak through an error
 // message.
 
 export interface ContentsEntry {

@@ -32,7 +32,7 @@ from being *delivered*, only from being *read* by the calling page's JS).
 | [`src/toolchain.ts.example`](src/toolchain.ts.example) | Pure helpers for the "Read routes" below: the manifest listing, the two allowed Contents paths, the filed-issues search shape. No `fetch`, no env access. |
 | [`test/*.test.ts.example`](test/) + [`test/support.ts.example`](test/support.ts.example) | The real test suite (JWT verification, input validation, the full handler end to end) -- runs inside the actual Workers runtime via `@cloudflare/vitest-pool-workers`, not a Node approximation. |
 | [`package.json.example`](package.json.example) | Dependencies (`jose`) and devDependencies (`wrangler`, `vitest`, `@cloudflare/vitest-pool-workers`, `typescript`, `eslint`). Not committed as `package.json` here -- see "No lint/test CI on this repo" in the repo `README.md`. |
-| [`wrangler.toml.example`](wrangler.toml.example) | Worker name, routes (two hostnames -- delete the second if you only have one), and the two non-secret `[vars]`. |
+| [`wrangler.toml.example`](wrangler.toml.example) | Worker name, routes (two hostnames -- delete the second if you only have one), and the three non-secret `[vars]`. |
 | [`tsconfig.json.example`](tsconfig.json.example), [`eslint.config.js.example`](eslint.config.js.example), [`vitest.config.ts.example`](vitest.config.ts.example), [`worker-configuration.d.ts.example`](worker-configuration.d.ts.example) | Toolchain config -- copy as-is, drop `.example`. |
 
 ## Bring it up
@@ -42,8 +42,8 @@ from being *delivered*, only from being *read* by the calling page's JS).
    `package.json`, etc.). There is no `package-lock.json.example` -- step 5 writes a real
    one from `package.json`, same as any other npm project.
 2. Fill in `wrangler.toml`'s placeholders: `<WORKER_NAME>`, the route(s) (`<HOSTNAME_n>` /
-   `<ZONE_n>` -- delete the second route entirely if you only have one hostname), and the two
-   `[vars]` (`ALLOWED_REPOS`, `ALLOWED_TITLE_PREFIXES` -- see "Configuration" below).
+   `<ZONE_n>` -- delete the second route entirely if you only have one hostname), and the three
+   `[vars]` (`ALLOWED_REPOS`, `ALLOWED_TITLE_PREFIXES`, `ALLOWED_EMAILS` -- see "Configuration" below).
 3. Fill in `package.json`'s `<PACKAGE_NAME>`.
 4. **Before running anything below, do the "What to adapt" step for `src/allowlist.ts`'s
    `labels.json` import** (see that section) -- skip it and `wrangler deploy`'s bundling step
@@ -91,6 +91,17 @@ from being *delivered*, only from being *read* by the calling page's JS).
   parse to an empty list when unset -- **fail closed**: an empty
   `ALLOWED_REPOS`/`ALLOWED_TITLE_PREFIXES` rejects every request, it does not silently allow
   everything.
+- **`ALLOWED_EMAILS`** -- comma-separated list of Access user emails allowed to `POST
+  /api/file-issue`, matched case-insensitively against the verified JWT's `email` claim. A valid
+  JWT only says Access let someone in, not who: the Access application can also admit other
+  users and machine service tokens (the gate runbook suggests one for probes), and a service
+  token carries no `email`, so it gets a 403 with no GitHub call made. Empty or unset allows
+  nobody (**fail closed**). Committed, like the other two.
+
+**Error bodies.** The 401 and 502 responses are fixed (`{"error":"unauthorized"}` and
+`{"error":"upstream"}`) and the reason goes to `console.warn`, so `wrangler tail` shows the
+operator what a caller must not see (a misconfigured secret, a rejected GitHub token). The 400
+and 403 bodies keep their messages: they describe the caller's own request.
 
 ## What to adapt
 
@@ -114,7 +125,8 @@ from being *delivered*, only from being *read* by the calling page's JS).
   `<OWNER>/<STORE_REPO>` (the repo holding the data files), `<STORE_DIR>` (the directory in it),
   `<STANDARD_REPO>` (the repo holding the one hardcoded standard file), `<STANDARD_PATH>` (its
   path), and `<FEATURE>` (the route prefix segment, e.g. `toolchain` -> `/api/toolchain/*`) in
-  `wrangler.toml`'s two extra routes and `src/index.ts`'s `TOOLCHAIN_PREFIX` constant. Not using
+  `wrangler.toml`'s two extra routes, `src/index.ts`'s `TOOLCHAIN_PREFIX` constant and the
+  `console.warn` log prefixes in that file's read-route handlers. Not using
   the read routes at all? Delete `src/toolchain.ts`, the two `/api/<FEATURE>/*` route lines, the
   toolchain-related imports/`Env` field/functions in `src/index.ts` and `src/github.ts`, and
   `test/toolchain.test.ts`.
@@ -143,6 +155,12 @@ pulls in a `sharp<0.35.4` (high-severity advisory) via `miniflare`'s dev-time im
 whether it's still needed) rather than dropping it as unexplained boilerplate.
 
 ## Read routes (`/api/<FEATURE>/*`, optional)
+
+**Who may read.** The read routes require a valid Access JWT but, unlike `POST /api/file-issue`,
+do **not** check `ALLOWED_EMAILS`: any principal the Access application admits (including a
+service token) can read what they serve. That matches `tools-site/worker`. If your Access
+application admits more people than should see the private repo's data, add the same
+`isAllowedEmail` check to the GET handler.
 
 `src/toolchain.ts.example` + the GET dispatch in `src/index.ts.example` add four more `GET`
 routes on this **same** Worker, behind the **same** Access application and hostname(s) as

@@ -18,12 +18,14 @@ import { SignJWT, exportJWK, generateKeyPair } from "jose";
 
 export const TEAM_DOMAIN = "test-team.cloudflareaccess.com";
 export const AUD = "test-aud-value";
+/** The one email vitest.config.ts's `ALLOWED_EMAILS` binding allows; `signToken` stamps it by default. */
+export const OPERATOR_EMAIL = "operator@example.test";
 
 let kidCounter = 0;
 
 export interface AccessFixture {
   jwksResponseBody: string;
-  signToken: (overrides?: { aud?: string; iss?: string; expiresIn?: string; noExp?: boolean }) => Promise<string>;
+  signToken: (overrides?: { aud?: string; iss?: string; expiresIn?: string; noExp?: boolean; email?: string | null }) => Promise<string>;
 }
 
 export async function makeAccessFixture(): Promise<AccessFixture> {
@@ -37,9 +39,11 @@ export async function makeAccessFixture(): Promise<AccessFixture> {
   const jwksResponseBody = JSON.stringify({ keys: [jwk] });
 
   async function signToken(
-    overrides: { aud?: string; iss?: string; expiresIn?: string; noExp?: boolean } = {},
+    overrides: { aud?: string; iss?: string; expiresIn?: string; noExp?: boolean; email?: string | null } = {},
   ): Promise<string> {
-    const jwt = new SignJWT({})
+    // `email: null` omits the claim -- what an Access service token looks like.
+    const email = overrides.email === undefined ? OPERATOR_EMAIL : overrides.email;
+    const jwt = new SignJWT(email === null ? {} : { email })
       .setProtectedHeader({ alg: "RS256", kid })
       .setIssuedAt()
       .setIssuer(overrides.iss ?? `https://${TEAM_DOMAIN}`)

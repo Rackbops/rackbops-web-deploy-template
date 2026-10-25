@@ -76,6 +76,15 @@ export function parseCsvEnv(value: string | undefined): string[] {
     .filter((s) => s.length > 0);
 }
 
+/** Whether `email` (the Access JWT's `email` claim, any type) is on the configured allow-list.
+ * Case-insensitive; a missing or non-string claim (a service token) and an empty list are both
+ * refused. */
+export function isAllowedEmail(email: unknown, allowedCsv: string | undefined): boolean {
+  if (typeof email !== "string" || email.trim() === "") return false;
+  const wanted = email.trim().toLowerCase();
+  return parseCsvEnv(allowedCsv).some((allowed) => allowed.toLowerCase() === wanted);
+}
+
 /** A prefix as it is enforced. {@link parseCsvEnv} trims every entry, so a configured
  * `"Label: "` reaches the validator as `"Label:"`; a prefix ending in `:` is a
  * `Label: text` prefix whose separating space was trimmed away, and it is required again here --

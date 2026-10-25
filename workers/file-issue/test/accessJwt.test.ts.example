@@ -42,7 +42,7 @@ describe("verifyAccessJwt", () => {
     const { jwksResponseBody, signToken } = await makeAccessFixture();
     stubJwks(jwksResponseBody);
     const token = await signToken();
-    await expect(verifyAccessJwt(token, TEAM_DOMAIN, AUD)).resolves.toBeUndefined();
+    await expect(verifyAccessJwt(token, TEAM_DOMAIN, AUD)).resolves.toMatchObject({ aud: AUD, email: "operator@example.test" });
   });
 
   it("rejects a token with the wrong audience -- the mutation guard: skip the aud check and this fails", async () => {

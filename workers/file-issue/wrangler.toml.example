@@ -24,3 +24,8 @@ routes = [
 [vars]
 ALLOWED_REPOS = "<OWNER>/<REPO>"
 ALLOWED_TITLE_PREFIXES = "<TITLE_PREFIX>"
+
+# Who may POST /api/file-issue. The Access app can admit other users and
+# machine service tokens as well; the Worker checks the JWT's `email` claim against this
+# list (a service token has none). Comma-separated, case-insensitive; empty allows nobody.
+ALLOWED_EMAILS = "<OPERATOR_EMAIL>"
