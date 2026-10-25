@@ -3,7 +3,7 @@ main = "src/index.ts"
 compatibility_date = "2026-08-22"
 
 # Both hostnames the Access application covers (one app, two zones; delete the second route if
-# you only have one -- see README.md, "Why a Worker"). Access runs at the edge before either route
+# you only have one -- see README.md, "Bring it up" step 2). Access runs at the edge before either route
 # reaches this Worker, so an unauthenticated request never gets here; the Worker still verifies
 # the Cf-Access-Jwt-Assertion itself (defence in depth).
 routes = [

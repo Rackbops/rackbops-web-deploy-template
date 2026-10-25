@@ -229,8 +229,8 @@ flow.
   advice that it's the right shape for a brand-new app-specific endpoint (vs. this repo's gate,
   which is right for a stable, already-established shared tool). `rackbops-ui-ux-std-lib` uses it
   **live**; `artifact-console` adopts it via [`servers/node-app/`](servers/node-app/) and is live on it
-  (`artifact-console#23` applied and closed 2026-09-06) -- so two consumers now use the
-  token-sidecar. That meets the "second real consumer" bar for extracting it as a documented
+  (`artifact-console#23` applied and closed 2026-09-06) -- so several consumers now use the
+  token-sidecar (std-lib, artifact-console, kenzen, discord-mcp). That meets the "second real consumer" bar for extracting it as a documented
   second gate shape here -- a follow-up that has not been done. Until it is, `node-app`'s README documents the
   token-tunnel divergence inline and defers the shared parts (Access app, DNS, closed-door verify) to
   `gate/README.md`.
