@@ -220,8 +220,8 @@ loop for each version bump.
 deliberate choice with a cost, so make it on purpose and write it down where your deploy is
 documented:
 
-- **Track `latest`** when the release flow is the deploy: a `v*` tag pushes both `:<version>` and
-  `:latest`, the timer swaps the container within one poll, and something checks that the version
+- **Track `latest`** when the release flow is the deploy: a `v*` tag pushes `:<version>` (and `:latest` too, when it is the newest stable
+  tag), the timer swaps the container within one poll, and something checks that the version
   you released is the version running. The reference consumer does exactly that: artifact-console's
   `scripts/release.mjs verify-deploy <v>` passes only once the container is running, healthy, and
   its `/healthz` reports `<v>`, starting the deploy unit first when the box isn't there yet.
