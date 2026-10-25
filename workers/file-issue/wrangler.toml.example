@@ -9,18 +9,13 @@ compatibility_date = "2026-08-22"
 routes = [
   { pattern = "<HOSTNAME_1>/api/file-issue", zone_name = "<ZONE_1>" },
   { pattern = "<HOSTNAME_2>/api/file-issue", zone_name = "<ZONE_2>" },
-  # Epic #667, E2/C1: GET /api/<FEATURE>/{manifest,sidecar/<host>,filed,standard} -- read routes
-  # over the store repo + the standard repo, behind the same Access app.
-  { pattern = "<HOSTNAME_1>/api/<FEATURE>/*", zone_name = "<ZONE_1>" },
-  { pattern = "<HOSTNAME_2>/api/<FEATURE>/*", zone_name = "<ZONE_2>" },
 ]
 
 # Repo-generic by design (<MAINTAINER> amendment, 2026-09-12): this Worker is not Tooling-only, so
 # WHICH repos/titles it will act on is itself config, not a hardcoded constant -- committed here
 # (not secret: an allowlist is meant to be reviewable in a PR diff, the same way labels.json's
-# standard is). ACCESS_TEAM_DOMAIN, ACCESS_AUD and GITHUB_TOKEN remain Worker SECRETS, plus
-# GITHUB_CONTENTS_TOKEN if you copied the read routes (`wrangler secret put`, never committed) --
-# see "Bring it up" and "Rotation" in README.md.
+# standard is). ACCESS_TEAM_DOMAIN, ACCESS_AUD and GITHUB_TOKEN remain Worker SECRETS
+# (`wrangler secret put`, never committed) -- see "Bring it up" and "Rotation" in README.md.
 [vars]
 ALLOWED_REPOS = "<OWNER>/<REPO>"
 ALLOWED_TITLE_PREFIXES = "<TITLE_PREFIX>"

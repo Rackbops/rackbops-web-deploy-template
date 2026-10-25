@@ -3,8 +3,8 @@
  * manifest listing, forming the two allowed GitHub Contents paths, and shaping the filed-issues
  * search result. No `fetch`, no env access -- kept unit-testable without any mock.
  *
- * TWO FIXED PATHS, NEVER A PROXY (the epic's own security decision, see README.md's "Read
- * routes" section): a fine-grained PAT cannot be scoped to a single path, so the path allowlist
+ * TWO FIXED PATHS, NEVER A PROXY (the epic's own security decision, see read-routes/README.md's "What the
+ * routes are" section): a fine-grained PAT cannot be scoped to a single path, so the path allowlist
  * here -- one directory listing, one filename pattern under it, one hardcoded standard file --
  * IS the security boundary. Every function below either returns one of a small, enumerable set of
  * paths, or refuses (`null`) outright; none of them ever echo an arbitrary caller-supplied path
@@ -44,7 +44,7 @@ export interface Manifest {
 
 /** Builds the manifest from a raw GitHub Contents directory listing. Schema 2: no `pushed`, no
  * per-host `generated` -- this is a listing and nothing more; the page reads each host's
- * `generated` from its own sidecar (see README.md's "Read routes" section). Sorted by host so
+ * `generated` from its own sidecar (see read-routes/README.md's "What the routes are" section). Sorted by host so
  * the page's rendering order is stable across requests regardless of the directory listing's own
  * order. */
 export function buildManifest(entries: readonly { name: string }[], generated: string): Manifest {

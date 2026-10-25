@@ -1,0 +1,160 @@
+/**
+ * Read-route add-on (Epic #667, E2/C1): `GET /api/<FEATURE>/{manifest,sidecar/<host>,filed,standard}`
+ * over a private store repo + standard repo, behind the same Access application as
+ * `/api/file-issue`. Copy to `src/readRoutes.ts` and wire it into `src/index.ts` as
+ * `read-routes/README.md` describes; the default filer copy carries none of this.
+ */
+import { ACCESS_JWT_HEADER, AccessError, verifyAccessJwt } from "./accessJwt";
+import { GitHubError } from "./github";
+import { getContentsListing, getRawFile, searchOpenIssues } from "./readGithub";
+import { buildManifest, filedFromSearch, sidecarPath, FILED_TITLE_PREFIX, STANDARD_PATH, STANDARD_REPO, STORE_DIR, STORE_REPO } from "./toolchain";
+import type { FiledSnapshot } from "./toolchain";
+
+/** The bindings the read routes use, a subset of `Env` once the add-on's field is added there. */
+export interface ReadRoutesEnv {
+  ACCESS_TEAM_DOMAIN: string;
+  ACCESS_AUD: string;
+  /** A SECOND fine-grained PAT, Contents: read only, on `<OWNER>/<STORE_REPO>` + `<STANDARD_REPO>`
+   * (both private) -- deliberately separate from GITHUB_TOKEN's Issues R/W scope, so a compromise
+   * of either token can't do the other's job. A Worker secret (`wrangler secret put`), never
+   * committed, never logged. */
+  GITHUB_CONTENTS_TOKEN: string;
+}
+
+function json(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+}
+
+export const READ_ROUTES_PREFIX = "/api/<FEATURE>/";
+const SIDECAR_SUBPATH_PREFIX = "sidecar/";
+
+interface RouteResult {
+  response: Response;
+  /** Whether `response` should be written into `caches.default`. `false` for every non-2xx
+   * response AND for `filed`'s degraded-but-200 `issues: null` shape -- a status check alone
+   * isn't enough to decide this, which is why each route builder returns it explicitly rather
+   * than the caller inferring it from `response.status`. */
+  cacheable: boolean;
+}
+
+async function buildManifestResult(env: ReadRoutesEnv, generated: string): Promise<RouteResult> {
+  try {
+    const entries = await getContentsListing(STORE_REPO, STORE_DIR, env.GITHUB_CONTENTS_TOKEN);
+    return { response: json(200, buildManifest(entries, generated)), cacheable: true };
+  } catch (err) {
+    if (err instanceof GitHubError) {
+      console.warn(`<FEATURE> manifest: ${err.message} (status ${err.status})`);
+      return { response: json(502, { error: "upstream" }), cacheable: false };
+    }
+    throw err;
+  }
+}
+
+async function buildSidecarResult(env: ReadRoutesEnv, host: string): Promise<RouteResult> {
+  const path = sidecarPath(host);
+  if (!path) return { response: json(404, { error: "not found" }), cacheable: false };
+  try {
+    const raw = await getRawFile(STORE_REPO, path, env.GITHUB_CONTENTS_TOKEN);
+    return {
+      response: new Response(raw, { status: 200, headers: { "content-type": "application/json" } }),
+      cacheable: true,
+    };
+  } catch (err) {
+    if (err instanceof GitHubError) {
+      console.warn(`<FEATURE> sidecar/${host}: ${err.message} (status ${err.status})`);
+      return { response: json(502, { error: "upstream" }), cacheable: false };
+    }
+    throw err;
+  }
+}
+
+async function buildFiledResult(env: ReadRoutesEnv, generated: string): Promise<RouteResult> {
+  try {
+    const items = await searchOpenIssues(STANDARD_REPO, FILED_TITLE_PREFIX, env.GITHUB_CONTENTS_TOKEN);
+    return { response: json(200, filedFromSearch(items, generated)), cacheable: true };
+  } catch (err) {
+    if (err instanceof GitHubError) {
+      // The page's own contract (issue.ts's FiledSnapshot): a failed lookup degrades to
+      // `issues: null` with a 200, never a 502 -- so the page's existing "show every file-issue
+      // button" fallback holds instead of the whole page erroring out over a transient GitHub
+      // hiccup. NOT cached: `cacheable: false` here (not inferred from the 200 status) is what
+      // keeps this degraded response from being served for the next 60s once a real search
+      // starts succeeding again.
+      // The reason goes to the log only (the body stays the fixed degraded shape), so a token
+      // that expired reads as a cause, not as "no issues".
+      console.warn(`<FEATURE> filed: ${err.message} (status ${err.status})`);
+      const degraded: FiledSnapshot = { schemaVersion: 1, generated, issues: null };
+      return { response: json(200, degraded), cacheable: false };
+    }
+    throw err;
+  }
+}
+
+async function buildStandardResult(env: ReadRoutesEnv): Promise<RouteResult> {
+  try {
+    const raw = await getRawFile(STANDARD_REPO, STANDARD_PATH, env.GITHUB_CONTENTS_TOKEN);
+    return {
+      response: new Response(raw, { status: 200, headers: { "content-type": "application/json" } }),
+      cacheable: true,
+    };
+  } catch (err) {
+    if (err instanceof GitHubError) {
+      console.warn(`<FEATURE> standard: ${err.message} (status ${err.status})`);
+      return { response: json(502, { error: "upstream" }), cacheable: false };
+    }
+    throw err;
+  }
+}
+
+/** `GET /api/<FEATURE>/{manifest,sidecar/<host>,filed,standard}` (Epic #667, E2/C1). Order,
+ * exactly, per request: route/method -> Access JWT verify (401, same as the POST /api/file-issue route in index.ts) ->
+ * `caches.default` lookup -> upstream -> `Cache-Control: max-age=60` on a cacheable result ->
+ * `ctx.waitUntil(cache.put(...))`. JWT verification runs BEFORE the cache is ever consulted, so a
+ * request with no valid JWT gets 401 even when a fresh, valid cached response already exists for
+ * that URL -- the cache never becomes a way to read this data unauthenticated. */
+export async function handleReadRoute(request: Request, env: ReadRoutesEnv, ctx: ExecutionContext, url: URL): Promise<Response> {
+  if (request.method !== "GET") {
+    return new Response(JSON.stringify({ error: "method not allowed" }), {
+      status: 405,
+      headers: { "content-type": "application/json", Allow: "GET" },
+    });
+  }
+
+  try {
+    await verifyAccessJwt(request.headers.get(ACCESS_JWT_HEADER), env.ACCESS_TEAM_DOMAIN, env.ACCESS_AUD);
+  } catch (err) {
+    if (err instanceof AccessError) {
+      console.warn(`access: ${err.message}`);
+      return json(401, { error: "unauthorized" });
+    }
+    throw err;
+  }
+
+  const cache = caches.default;
+  const cached = await cache.match(request);
+  if (cached) return cached;
+
+  const subpath = url.pathname.slice(READ_ROUTES_PREFIX.length);
+  const generated = new Date().toISOString();
+
+  let result: RouteResult;
+  if (subpath === "manifest") {
+    result = await buildManifestResult(env, generated);
+  } else if (subpath.startsWith(SIDECAR_SUBPATH_PREFIX)) {
+    result = await buildSidecarResult(env, subpath.slice(SIDECAR_SUBPATH_PREFIX.length));
+  } else if (subpath === "filed") {
+    result = await buildFiledResult(env, generated);
+  } else if (subpath === "standard") {
+    result = await buildStandardResult(env);
+  } else {
+    return json(404, { error: "not found" });
+  }
+
+  if (!result.cacheable) return result.response;
+
+  const cacheableResponse = new Response(result.response.body, result.response);
+  cacheableResponse.headers.set("Cache-Control", "max-age=60");
+  ctx.waitUntil(cache.put(request, cacheableResponse.clone()));
+  return cacheableResponse;
+}
+
