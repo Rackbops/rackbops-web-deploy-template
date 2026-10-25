@@ -98,6 +98,10 @@ case "$1" in
     printf '%s\n' "${HAVE_ID-}"
     ;;
   login)
+    # Record what `docker login` reads on stdin and the registry/user args, when a case asks.
+    if [[ -n "${LOGIN_LOG:-}" ]]; then
+      { printf 'args=%s\n' "$*"; printf 'stdin=%s\n' "$(cat)"; } > "$LOGIN_LOG"
+    fi
     exit 0
     ;;
   *)
@@ -183,6 +187,43 @@ if grep -q "compose up" "$log"; then fail "case5: compose up was called despite 
 rm -rf "$stack" "$shim_dir"; rm -f "$sut" "$log"
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+echo "=== Case 6: quoted registry values in .env are unquoted before docker login (#126) ==="
+for variant in double single; do
+  stack="$(make_stack)"; sut="$(make_sut "$stack")"; shim_dir="$(make_docker_shim)"; log="$(mktemp)"; login_log="$(mktemp)"
+  if [[ "$variant" == double ]]; then
+    printf 'REGISTRY="registry.example"\nREGISTRY_USER="bob"\nREGISTRY_TOKEN="tok"\n' >> "$stack/.env"
+  else
+    printf "REGISTRY='registry.example'\nREGISTRY_USER='bob'\nREGISTRY_TOKEN='tok'\n" >> "$stack/.env"
+  fi
+  output="$(PATH="$shim_dir:$PATH" DOCKER_CALL_LOG="$log" LOGIN_LOG="$login_log" WANT_ID="sha256:abc" \
+    CONTAINER_ID="c1" HAVE_ID="sha256:abc" bash "$sut" 2>&1)"
+  rc=$?
+  if [[ $rc -eq 0 ]]; then pass "case6 ($variant): exits 0"; else fail "case6 ($variant): expected exit 0, got $rc (output: $output)"; fi
+  if grep -qx 'stdin=tok' "$login_log"; then pass "case6 ($variant): docker login reads the unquoted token"; else fail "case6 ($variant): login stdin was: $(cat "$login_log")"; fi
+  if grep -qx 'args=login registry.example -u bob --password-stdin' "$login_log"; then pass "case6 ($variant): registry and user are unquoted"; else fail "case6 ($variant): login args were: $(cat "$login_log")"; fi
+  rm -rf "$stack" "$shim_dir"; rm -f "$sut" "$log" "$login_log"
+done
+
+# ---------------------------------------------------------------------------
+echo "=== Case 7: unquoted values still work (the documented shape) ==="
+stack="$(make_stack)"; sut="$(make_sut "$stack")"; shim_dir="$(make_docker_shim)"; log="$(mktemp)"; login_log="$(mktemp)"
+printf 'REGISTRY_USER=bob\nREGISTRY_TOKEN=a=b"c\n' >> "$stack/.env"
+output="$(PATH="$shim_dir:$PATH" DOCKER_CALL_LOG="$log" LOGIN_LOG="$login_log" WANT_ID="sha256:abc" \
+  CONTAINER_ID="c1" HAVE_ID="sha256:abc" bash "$sut" 2>&1)"
+if grep -qx 'stdin=a=b"c' "$login_log"; then pass "case7: an unquoted token (with = and an interior quote) is passed through untouched"; else fail "case7: login stdin was: $(cat "$login_log")"; fi
+if grep -qx 'args=login ghcr.io -u bob --password-stdin' "$login_log"; then pass "case7: REGISTRY defaults to ghcr.io"; else fail "case7: login args were: $(cat "$login_log")"; fi
+rm -rf "$stack" "$shim_dir"; rm -f "$sut" "$log" "$login_log"
+
+# ---------------------------------------------------------------------------
+echo "=== Case 8: a CRLF .env still unquotes ==="
+stack="$(make_stack)"; sut="$(make_sut "$stack")"; shim_dir="$(make_docker_shim)"; log="$(mktemp)"; login_log="$(mktemp)"
+printf 'REGISTRY_TOKEN="tok"\r\n' >> "$stack/.env"
+output="$(PATH="$shim_dir:$PATH" DOCKER_CALL_LOG="$log" LOGIN_LOG="$login_log" WANT_ID="sha256:abc" \
+  CONTAINER_ID="c1" HAVE_ID="sha256:abc" bash "$sut" 2>&1)"
+if grep -qx 'stdin=tok' "$login_log"; then pass "case8: CRLF-terminated quoted token is unquoted"; else fail "case8: login stdin was: $(cat "$login_log")"; fi
+rm -rf "$stack" "$shim_dir"; rm -f "$sut" "$log" "$login_log"
+
 echo
 echo "$pass_count passed, $fail_count failed"
 [[ $fail_count -eq 0 ]]

@@ -47,7 +47,7 @@ cp publish/deploy-pull.sh.example /opt/stacks/<app>/deploy/deploy-pull.sh
 
 # 3. Log in once so the first pull works (deploy-pull.sh also does this each run). ghcr.io is the
 #    REGISTRY default; use whatever you set REGISTRY to in .env:
-grep '^REGISTRY_TOKEN=' /opt/stacks/<app>/.env | cut -d= -f2- \
+grep '^REGISTRY_TOKEN=' /opt/stacks/<app>/.env | cut -d= -f2- | sed -E "s/^(['\"])(.*)\1$/\2/" \
   | docker login ghcr.io -u <REGISTRY_USER> --password-stdin
 
 # 4. Bring up the app AND the tunnel sidecar (the `tunnel` profile opts the sidecar in):
@@ -220,8 +220,8 @@ loop for each version bump.
 deliberate choice with a cost, so make it on purpose and write it down where your deploy is
 documented:
 
-- **Track `latest`** when the release flow is the deploy: a `v*` tag pushes both `:<version>` and
-  `:latest`, the timer swaps the container within one poll, and something checks that the version
+- **Track `latest`** when the release flow is the deploy: a `v*` tag pushes `:<version>` (and `:latest` too, when it is the newest stable
+  tag), the timer swaps the container within one poll, and something checks that the version
   you released is the version running. The reference consumer does exactly that: artifact-console's
   `scripts/release.mjs verify-deploy <v>` passes only once the container is running, healthy, and
   its `/healthz` reports `<v>`, starting the deploy unit first when the box isn't there yet.

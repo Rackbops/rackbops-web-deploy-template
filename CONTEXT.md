@@ -75,7 +75,8 @@ still resolve by GitHub's owner redirect, but `Rackbops/...` is canonical.)
   recorded `:latest` that now named a newer image. Which pull moved the box's local tag wasn't
   observed (**inferred**). The `latest`-tracking bullet describes artifact-console's `scripts/release.mjs`
   (`cmdVerifyDeploy` / `deployVerdict`: running, healthy, and `/healthz` reporting the version) and
-  its `release.yml`, which pushes both `:<version>` and `:latest` on a `v*` tag.
+  its `release.yml`, which pushes both `:<version>` and `:latest` on a `v*` tag as last read (whether it
+  has the newest-tag guard that `ci/release.yml.example` now carries, #122, was not checked).
 - **`servers/usr/` was removed on 2026-10-04.** It was `servers/node-app/`'s shape applied to
   `Lepid-Labs/usr` (a different org's private repo), plus a Postgres and a JWKS-bypass ingress rule, built
   for `Rackbops/artifact-console#101`. Its only deployment was torn down when usr left the plan, so the
