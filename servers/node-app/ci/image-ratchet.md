@@ -43,8 +43,8 @@ concurrency:
 
 jobs:
   ratchet:
-    runs-on: [self-hosted, docker]   # <-- swap for ubuntu-latest on a PUBLIC repo, see above
-    timeout-minutes: 15              # a pool slot is shared; GitHub's default is 360 minutes
+    runs-on: ubuntu-latest   # <-- [self-hosted, docker] on a PRIVATE repo with a DinD pool, see above
+    timeout-minutes: 15      # a self-hosted pool slot is shared; GitHub's default is 360 minutes
     steps:
       - uses: actions/checkout@v4
       - name: Build the real image
@@ -69,9 +69,9 @@ jobs:
 `release.yml.example` in this same directory genuinely is a template -- swap `<app>`/`<owner>`
 and it runs. This pattern isn't: the runner choice and the assertion logic are real decisions
 every consumer has to make for itself, not blanks to fill in. Shipping a `.yml.example` that
-looked copy-pasteable would invite exactly the runner mistake this doc's first section warns
-against (defaulting to `self-hosted` without checking repo visibility) on a repo where that's
-wrong. Read Kenzen's real workflow file linked above for the complete, working version.
+looked copy-pasteable would invite a runner mistake this doc's first section warns
+against (picking `self-hosted` without checking repo visibility) on a repo where that's
+wrong. The block above defaults to `ubuntu-latest`, the safe choice for a public repo. Read Kenzen's real workflow file linked above for the complete, working version.
 
 ## See also
 

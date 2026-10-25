@@ -39,8 +39,8 @@ from being *delivered*, only from being *read* by the calling page's JS).
 
 1. Copy every `.example` file into your app repo under (for example) `worker/`, dropping the
    `.example` suffix (`src/index.ts.example` -> `src/index.ts`, `package.json.example` ->
-   `package.json`, etc.). There is no `package-lock.json.example` -- `npm ci` in step 4
-   generates a real one from `package.json`, same as any other npm project.
+   `package.json`, etc.). There is no `package-lock.json.example` -- step 5 writes a real
+   one from `package.json`, same as any other npm project.
 2. Fill in `wrangler.toml`'s placeholders: `<WORKER_NAME>`, the route(s) (`<HOSTNAME_n>` /
    `<ZONE_n>` -- delete the second route entirely if you only have one hostname), and the two
    `[vars]` (`ALLOWED_REPOS`, `ALLOWED_TITLE_PREFIXES` -- see "Configuration" below).
@@ -48,7 +48,8 @@ from being *delivered*, only from being *read* by the calling page's JS).
 4. **Before running anything below, do the "What to adapt" step for `src/allowlist.ts`'s
    `labels.json` import** (see that section) -- skip it and `wrangler deploy`'s bundling step
    fails to resolve the import in a fresh repo with no `labels.json` three directories up.
-5. `npm ci`, then `npx wrangler login` (once per machine) and `npx wrangler deploy`.
+5. `npm install` the first time (`npm ci` refuses to run without a lockfile) and commit the
+   `package-lock.json` it writes; use `npm ci` after that. Then `npx wrangler login` (once per machine) and `npx wrangler deploy`.
 6. Set the secrets (never committed, never in `wrangler.toml`) -- the first three are always
    needed; `GITHUB_CONTENTS_TOKEN` only if you're using the "Read routes" below:
    ```bash
@@ -133,7 +134,7 @@ scope too, or the Worker's allowlist would let through a repo the token itself c
 The test suite is real and runs inside the actual Workers runtime (`@cloudflare/vitest-pool-workers`,
 not a Node approximation) -- deliberate for a write path with a secret: `Request`/`Response`/
 `fetch`/WebCrypto behave exactly as they will in production. After copying and adapting the
-files above: `npm ci`, then `npm run build` (typecheck), `npm run lint`, `npm test`. Wire these
+files above: `npm install` (first time; commit the lockfile it writes) or `npm ci` (once one exists), then `npm run build` (typecheck), `npm run lint`, `npm test`. Wire these
 into **your own** repo's CI -- this template repo runs none of it itself.
 
 One known transitive dependency issue at time of extraction: `@cloudflare/vitest-pool-workers`
@@ -193,7 +194,7 @@ matters.
 curl -sI https://<your-hostname>/api/<FEATURE>/manifest   # no Access cookie -> the Access redirect (302), never live data
 ```
 
-**Which direction fixes flow.** Same rule as `/api/file-issue` above: a behavior fix (JWT
+**Which direction fixes flow.** A behavior fix (JWT
 verification, the path allowlist, the GitHub API wrapping) belongs in the repo that actually has a
 test suite and CI watching this code first, then gets ported back into these `.example` files with
 the same placeholder substitutions -- never the other way around. A defect intrinsic to this

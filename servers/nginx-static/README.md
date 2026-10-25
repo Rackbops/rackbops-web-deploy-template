@@ -1,10 +1,11 @@
 # nginx-static base server
 
 The **nginx-static** base server: a stock `nginx:alpine` container serving files off a read-only
-bind mount, bound to loopback. This is the only base server implemented today; the repo's
-[`servers/`](../) tier leaves room for sibling base servers (another static-file server like a Node
-`serve`/`http-server` or Caddy; or a dynamic app server) as `../<name>/` later — all behind the
-same shared [`gate/`](../../gate/).
+bind mount, bound to loopback. The repo's [`servers/`](../) tier also holds
+[`node-app`](../node-app/) (a dynamic app server, which uses a token-sidecar tunnel instead of the
+shared gate), and leaves room for further sibling base servers (another static-file server like a
+Node `serve`/`http-server` or Caddy) as `../<name>/` later. This one runs behind the shared
+[`gate/`](../../gate/).
 
 ## Files
 

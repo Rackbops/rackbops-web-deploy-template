@@ -7,9 +7,9 @@ runbooks, **not** a running app or a library anything imports. It is **not** an 
 
 The repo is an **extensible monorepo**: one shared, origin-agnostic **`gate/`** (the Cloudflare +
 loopback + verify runbook, identical for any origin) plus a **`servers/<name>/`** tier of pluggable
-base servers. Today only `servers/nginx-static/` exists; the tier is left open for future base
-servers (another static-file server, or a dynamic app server) **but they are scaffolded only when a
-real consumer needs one** -- never pre-built empty. This altitude guard is the whole reason the
+base servers. Today `servers/nginx-static/` and `servers/node-app/` exist, and `workers/file-issue/`
+sits beside them as a Cloudflare Worker scaffold; the tier is left open for further base servers
+**but they are scaffolded only when a real consumer needs one** -- never pre-built empty. This altitude guard is the whole reason the
 repo is shaped this way; don't add a speculative `servers/<x>/` with no consumer.
 
 My personal `~/.claude/CLAUDE.md` governs *how I work* -- the review gate, escalation, git &
@@ -71,8 +71,8 @@ the safe window; GitHub's redirect covers the old URL regardless.)
 
 The repo also **moved owner**, roshne -> the `Rackbops` org, so `roshne/rackbops-web-deploy-template`
 still resolves but only by GitHub's owner redirect -- which dies the moment anything is created at
-that name. Write `Rackbops/...` in anything new. `Tooling`'s scaffold pointer still carries the old
-spelling (`Rackbops/Tooling#349` tracks that sweep).
+that name. Write `Rackbops/...` in anything new. (`Tooling`'s scaffold pointer was swept to the
+`Rackbops/` spelling in `Rackbops/Tooling#349`, closed 2026-09-10.)
 
 ## Overriding personal's "config never lives in the repo"
 
@@ -99,8 +99,19 @@ that a consumer's CI would:
   `[System.Management.Automation.Language.Parser]::ParseFile(...)` (the exact check `Tooling`'s
   `powershell-app.yml` runs). It's a `.example`, so a consumer renames it to `.ps1` -- the parser
   reads content, not extension, so a temp copy or direct parse works.
-- **Shell** -- `bash -n servers/nginx-static/publish/deploy-pull.sh.example` (and `shellcheck` if
-  available).
+- **Shell** -- `bash -n` on every `*.sh.example` (`servers/nginx-static/publish/deploy-pull.sh.example`,
+  `servers/node-app/publish/deploy-pull.sh.example`, `servers/node-app/publish/set-tunnel-token.sh.example`)
+  and `shellcheck -s bash` on each plus the two `*.test.sh` harnesses, if available.
+- **node-app harnesses** -- run both by hand after touching `servers/node-app/publish/`:
+  `bash servers/node-app/publish/deploy-pull.test.sh` and
+  `bash servers/node-app/publish/set-tunnel-token.test.sh`; each must report `0 failed`.
+  `set-tunnel-token.test.sh` has a file-mode case that needs a POSIX filesystem (WSL's native
+  one, not `/mnt/c`, and not Git Bash on Windows, where it reports one failure).
+- **Worker port** (`workers/file-issue/`) -- the suite cannot run in this repo (no `package.json`,
+  placeholders unfilled). After a change, copy the files into a scratch directory, drop `.example`,
+  fill the `<PLACEHOLDER>`s (or copy the filled files back from `tools-site/worker` in
+  `Rackbops/Tooling` and diff), and run `npm install && npm run build && npm test` there before
+  committing. A line dropped while retyping placeholders across the files ships to every consumer.
 - **Docs** -- a claim in any runbook (`gate/README.md`, a server README, root `README.md`) or this
   file must be traceable to a real source file (see Ground truth). Verify while writing; one
   claims-vs-code pass before calling it done.
