@@ -21,18 +21,25 @@ Do the default copy's bring-up first (`../README.md`, "Bring it up"), then:
    `src/readRoutes.ts` (`READ_ROUTES_PREFIX` and the `console.warn` log prefixes), the test, and
    `wrangler.toml`. The test also uses `<HOSTNAME_1>`; fill it with your first hostname. Placeholders
    left in comments (`<OWNER>`, `<STORE_REPO>`, `<STANDARD_REPO>`) are cosmetic.
-3. `src/index.ts`: add the import and the `Env` field, and one dispatch branch in `fetch`:
+3. `src/index.ts`: add the import and the `Env` field, one dispatch branch in `fetch`, and the
+   cache drop in `handleFileIssue`:
    ```ts
-   import { READ_ROUTES_PREFIX, handleReadRoute } from "./readRoutes";
+   import { READ_ROUTES_PREFIX, dropFiledCache, handleReadRoute } from "./readRoutes";
 
    // in `interface Env`:
    GITHUB_CONTENTS_TOKEN: string;
 
-   // in `fetch`, after the /api/file-issue branch (rename `_ctx` to `ctx`):
+   // in `fetch`, after the /api/file-issue branch:
    if (url.pathname.startsWith(READ_ROUTES_PREFIX)) {
      return handleReadRoute(request, env, ctx, url);
    }
+
+   // in `handleFileIssue`: rename the `_ctx` parameter to `ctx`, and at the comment that mentions
+   // this add-on (just before `return json(201, ...)`):
+   ctx.waitUntil(dropFiledCache(request.url));
    ```
+   The `filed` list is edge-cached for 60 seconds; without that line, a reload right after a
+   filing still offers "File now" for the action just filed.
 4. `wrangler.toml`: add to `routes` (and delete the second line if you have one hostname):
    ```toml
    { pattern = "<HOSTNAME_1>/api/<FEATURE>/*", zone_name = "<ZONE_1>" },
