@@ -24,9 +24,17 @@ cd "$STACK_DIR" || exit 1
 
 # Private registry: authenticate before pulling. Read the read:packages credential from .env with
 # grep -- NOT `source .env`, so arbitrary .env content is never executed. A repeat login is a no-op.
-reg="$(grep -E '^REGISTRY=' .env 2>/dev/null | cut -d= -f2- || true)"; reg="${reg:-ghcr.io}"
-reg_user="$(grep -E '^REGISTRY_USER=' .env 2>/dev/null | cut -d= -f2- || true)"
-reg_token="$(grep -E '^REGISTRY_TOKEN=' .env 2>/dev/null | cut -d= -f2- || true)"
+# Compose accepts a quoted value (REGISTRY_TOKEN="ghp_...") and strips the quotes; grep|cut keeps
+# them, so env_value strips one surrounding pair of double or single quotes the same way.
+env_value() {
+  local v
+  v="$(grep -E "^$1=" .env 2>/dev/null | cut -d= -f2- || true)"
+  if [[ "$v" =~ ^\"(.*)\"$ ]] || [[ "$v" =~ ^\'(.*)\'$ ]]; then v="${BASH_REMATCH[1]}"; fi
+  printf '%s' "$v"
+}
+reg="$(env_value REGISTRY)"; reg="${reg:-ghcr.io}"
+reg_user="$(env_value REGISTRY_USER)"
+reg_token="$(env_value REGISTRY_TOKEN)"
 if [[ -n "$reg_token" ]]; then
   printf '%s' "$reg_token" | docker login "$reg" -u "${reg_user:-USERNAME}" --password-stdin >/dev/null
 fi

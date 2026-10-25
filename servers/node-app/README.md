@@ -47,7 +47,7 @@ cp publish/deploy-pull.sh.example /opt/stacks/<app>/deploy/deploy-pull.sh
 
 # 3. Log in once so the first pull works (deploy-pull.sh also does this each run). ghcr.io is the
 #    REGISTRY default; use whatever you set REGISTRY to in .env:
-grep '^REGISTRY_TOKEN=' /opt/stacks/<app>/.env | cut -d= -f2- \
+grep '^REGISTRY_TOKEN=' /opt/stacks/<app>/.env | cut -d= -f2- | tr -d "\"'" \
   | docker login ghcr.io -u <REGISTRY_USER> --password-stdin
 
 # 4. Bring up the app AND the tunnel sidecar (the `tunnel` profile opts the sidecar in):
