@@ -107,7 +107,7 @@ async function buildStandardResult(env: ReadRoutesEnv): Promise<RouteResult> {
 }
 
 /** `GET /api/<FEATURE>/{manifest,sidecar/<host>,filed,standard}` (Epic #667, E2/C1). Order,
- * exactly, per request: route/method -> Access JWT verify (401, same as the POST route above) ->
+ * exactly, per request: route/method -> Access JWT verify (401, same as the POST /api/file-issue route in index.ts) ->
  * `caches.default` lookup -> upstream -> `Cache-Control: max-age=60` on a cacheable result ->
  * `ctx.waitUntil(cache.put(...))`. JWT verification runs BEFORE the cache is ever consulted, so a
  * request with no valid JWT gets 401 even when a fresh, valid cached response already exists for

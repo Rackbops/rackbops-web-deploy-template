@@ -112,6 +112,8 @@ that a consumer's CI would:
   fill the `<PLACEHOLDER>`s (or copy the filled files back from `tools-site/worker` in
   `Rackbops/Tooling` and diff), and run `npm install && npm run build && npm test` there before
   committing. A line dropped while retyping placeholders across the files ships to every consumer.
+  Run it twice: the default filer copy, then a copy with the `workers/file-issue/read-routes/` add-on
+  applied per its README (the read-route tests live there; `tools-site/worker` carries both).
 - **Docs** -- a claim in any runbook (`gate/README.md`, a server README, root `README.md`) or this
   file must be traceable to a real source file (see Ground truth). Verify while writing; one
   claims-vs-code pass before calling it done.

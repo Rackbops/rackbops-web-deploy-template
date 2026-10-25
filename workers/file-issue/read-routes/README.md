@@ -15,9 +15,12 @@ Do the default copy's bring-up first (`../README.md`, "Bring it up"), then:
    `read-routes/test/toolchain.test.ts.example` -> `test/toolchain.test.ts`.
 2. Fill the placeholders: `<OWNER>/<STORE_REPO>` (the repo holding the data files), `<STORE_DIR>`
    (the directory in it), `<STANDARD_REPO>` (the repo holding the one hardcoded standard file),
-   `<STANDARD_PATH>` (its path) in `src/toolchain.ts` and the test, and `<FEATURE>` (the route
-   prefix segment, e.g. `toolchain` -> `/api/toolchain/*`) in `src/readRoutes.ts`
-   (`READ_ROUTES_PREFIX` and the `console.warn` log prefixes), the test, and `wrangler.toml`.
+   `<STANDARD_PATH>` (its path) and `<TITLE_PREFIX>` (the title prefix the `filed` route searches
+   for; the same value as `ALLOWED_TITLE_PREFIXES`) in `src/toolchain.ts` and the test, and
+   `<FEATURE>` (the route prefix segment, e.g. `toolchain` -> `/api/toolchain/*`) in
+   `src/readRoutes.ts` (`READ_ROUTES_PREFIX` and the `console.warn` log prefixes), the test, and
+   `wrangler.toml`. The test also uses `<HOSTNAME_1>`; fill it with your first hostname. Placeholders
+   left in comments (`<OWNER>`, `<STORE_REPO>`, `<STANDARD_REPO>`) are cosmetic.
 3. `src/index.ts`: add the import and the `Env` field, and one dispatch branch in `fetch`:
    ```ts
    import { READ_ROUTES_PREFIX, handleReadRoute } from "./readRoutes";
@@ -51,7 +54,7 @@ service token) can read what they serve. That matches `tools-site/worker`. If yo
 application admits more people than should see the private repo's data, add the same
 `isAllowedEmail` check to the GET handler.
 
-`src/toolchain.ts.example` + `src/readRoutes.ts.example` add four more `GET`
+`read-routes/src/toolchain.ts.example`, `readRoutes.ts.example` and `readGithub.ts.example` add four more `GET`
 routes on this **same** Worker, behind the **same** Access application and hostname(s) as
 `/api/file-issue`. They exist for one purpose: **a static page reading a private repo's
 files without ever holding a GitHub token in the browser** -- the same reason `/api/file-issue`
@@ -77,7 +80,7 @@ instead.
 **A second fine-grained PAT, `GITHUB_CONTENTS_TOKEN`** -- **Contents: read** only, scoped to
 **exactly** `<OWNER>/<STORE_REPO>` and `<STANDARD_REPO>`, separate from `GITHUB_TOKEN`'s Issues
 read/write scope above, so a compromise of either token can't do the other's job. Mint and rotate
-it the same way as `GITHUB_TOKEN` (see "Rotation" below).
+it the same way as `GITHUB_TOKEN` (see "Rotation" in [`../README.md`](../README.md)).
 
 **Order per request**, exactly: method/route dispatch -> Access JWT verify (`401`, the same check
 `/api/file-issue` uses) -> `caches.default` lookup -> upstream GitHub call -> `Cache-Control:

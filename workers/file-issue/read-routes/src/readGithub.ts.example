@@ -7,8 +7,8 @@ import type { SearchIssueItem } from "./github";
 
 // --- Toolchain read routes (Epic #667, E2/C1) -----------------------------------------------
 // The three calls below use GITHUB_CONTENTS_TOKEN (Contents: read on <OWNER>/<STORE_REPO>
-// + <STANDARD_REPO>, both private), a SEPARATE fine-grained PAT from GITHUB_TOKEN above (Issues
-// R/W on the ALLOWED_REPOS set) -- see README.md's token-hygiene section. Every failure here
+// + <STANDARD_REPO>, both private), a SEPARATE fine-grained PAT from GITHUB_TOKEN (Issues R/W on
+// the ALLOWED_REPOS set, used by github.ts) -- see read-routes/README.md. Every failure here
 // becomes a GitHubError carrying a status and a message (GitHub's own `message`, this module's
 // fixed text, or a local error's text). The caller logs it to console.warn and maps the failure
 // to a fixed `{"error":"upstream"}` (or, for `filed` specifically, `issues: null`); the message
