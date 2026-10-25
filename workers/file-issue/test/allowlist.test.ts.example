@@ -3,6 +3,7 @@ import {
   RepoNotAllowedError,
   ValidationError,
   assertRepoAllowed,
+  isAllowedEmail,
   parseCsvEnv,
   validateFileIssueRequest,
 } from "../src/allowlist";
@@ -147,5 +148,18 @@ describe("parseCsvEnv", () => {
   it("parses undefined/empty as an empty array, not a crash", () => {
     expect(parseCsvEnv(undefined)).toEqual([]);
     expect(parseCsvEnv("")).toEqual([]);
+  });
+});
+
+describe("isAllowedEmail", () => {
+  it("matches case-insensitively and trims", () => {
+    expect(isAllowedEmail("A@x.test", " a@X.test , b@x.test")).toBe(true);
+  });
+  it("refuses a missing or non-string claim, an unlisted email, and an empty list", () => {
+    expect(isAllowedEmail(undefined, "a@x.test")).toBe(false);
+    expect(isAllowedEmail(42, "a@x.test")).toBe(false);
+    expect(isAllowedEmail("c@x.test", "a@x.test")).toBe(false);
+    expect(isAllowedEmail("a@x.test", "")).toBe(false);
+    expect(isAllowedEmail("a@x.test", undefined)).toBe(false);
   });
 });

@@ -21,7 +21,7 @@
  * always this same site's own same-origin `fetch()` call.
  */
 import { ACCESS_JWT_HEADER, AccessError, verifyAccessJwt } from "./accessJwt";
-import { RepoNotAllowedError, ValidationError, assertRepoAllowed, parseCsvEnv, validateFileIssueRequest } from "./allowlist";
+import { RepoNotAllowedError, ValidationError, assertRepoAllowed, isAllowedEmail, parseCsvEnv, validateFileIssueRequest } from "./allowlist";
 import { createIssue, findExistingIssue, getContentsListing, getRawFile, searchOpenIssues, GitHubError } from "./github";
 import { buildManifest, filedFromSearch, sidecarPath, FILED_TITLE_PREFIX, STANDARD_PATH, STANDARD_REPO, STORE_DIR, STORE_REPO } from "./toolchain";
 import type { FiledSnapshot } from "./toolchain";
@@ -38,6 +38,12 @@ export interface Env {
   /** Comma-separated title-prefix list, applied to every repo in `ALLOWED_REPOS` alike. Also a
    * committed `[vars]` entry. */
   ALLOWED_TITLE_PREFIXES: string;
+  /** Comma-separated list of Access user emails allowed to POST /api/file-issue. The
+   * Access app can also admit other users and machine service tokens (the gate runbook suggests
+   * one for probes), and a valid JWT alone does not say who it is. Matched
+   * case-insensitively against the JWT's `email` claim, which a service token does not carry.
+   * Empty or unset allows nobody (fail closed). A committed `[vars]` entry. */
+  ALLOWED_EMAILS: string;
   /** Epic #667, E2/C1: a SECOND fine-grained PAT, Contents: read only, on `<OWNER>/<STORE_REPO>`
    * + `<STANDARD_REPO>` (both private) -- deliberately separate from GITHUB_TOKEN's Issues R/W
    * scope, so a compromise of either token can't do the other's job. A Worker secret (`wrangler
@@ -67,11 +73,22 @@ async function handleFileIssue(request: Request, env: Env): Promise<Response> {
     return json(403, { error: "cross-site requests are not allowed" });
   }
 
+  let claims;
   try {
-    await verifyAccessJwt(request.headers.get(ACCESS_JWT_HEADER), env.ACCESS_TEAM_DOMAIN, env.ACCESS_AUD);
+    claims = await verifyAccessJwt(request.headers.get(ACCESS_JWT_HEADER), env.ACCESS_TEAM_DOMAIN, env.ACCESS_AUD);
   } catch (err) {
-    if (err instanceof AccessError) return json(401, { error: err.message });
+    if (err instanceof AccessError) {
+      console.warn(`access: ${err.message}`);
+      return json(401, { error: "unauthorized" });
+    }
     throw err;
+  }
+
+  // Authenticated is not authorized: the Access app admits more than the one operator this
+  // endpoint (and its dedupe-race reasoning) is built for. A service token has no `email`.
+  if (!isAllowedEmail(claims.email, env.ALLOWED_EMAILS)) {
+    console.warn("access: principal not in ALLOWED_EMAILS");
+    return json(403, { error: "forbidden" });
   }
 
   let payload: unknown;
@@ -108,7 +125,10 @@ async function handleFileIssue(request: Request, env: Env): Promise<Response> {
     const created = await createIssue(validated.repo, validated, env.GITHUB_TOKEN);
     return json(201, { number: created.number, url: created.url });
   } catch (err) {
-    if (err instanceof GitHubError) return json(502, { error: err.message });
+    if (err instanceof GitHubError) {
+      console.warn(`github: ${err.message}`);
+      return json(502, { error: "upstream" });
+    }
     throw err;
   }
 }
@@ -130,7 +150,10 @@ async function buildManifestResult(env: Env, generated: string): Promise<RouteRe
     const entries = await getContentsListing(STORE_REPO, STORE_DIR, env.GITHUB_CONTENTS_TOKEN);
     return { response: json(200, buildManifest(entries, generated)), cacheable: true };
   } catch (err) {
-    if (err instanceof GitHubError) return { response: json(502, { error: "upstream" }), cacheable: false };
+    if (err instanceof GitHubError) {
+      console.warn(`<FEATURE> manifest: ${err.message} (status ${err.status})`);
+      return { response: json(502, { error: "upstream" }), cacheable: false };
+    }
     throw err;
   }
 }
@@ -145,7 +168,10 @@ async function buildSidecarResult(env: Env, host: string): Promise<RouteResult> 
       cacheable: true,
     };
   } catch (err) {
-    if (err instanceof GitHubError) return { response: json(502, { error: "upstream" }), cacheable: false };
+    if (err instanceof GitHubError) {
+      console.warn(`<FEATURE> sidecar: ${err.message} (status ${err.status})`);
+      return { response: json(502, { error: "upstream" }), cacheable: false };
+    }
     throw err;
   }
 }
@@ -177,7 +203,10 @@ async function buildStandardResult(env: Env): Promise<RouteResult> {
       cacheable: true,
     };
   } catch (err) {
-    if (err instanceof GitHubError) return { response: json(502, { error: "upstream" }), cacheable: false };
+    if (err instanceof GitHubError) {
+      console.warn(`<FEATURE> standard: ${err.message} (status ${err.status})`);
+      return { response: json(502, { error: "upstream" }), cacheable: false };
+    }
     throw err;
   }
 }
@@ -199,7 +228,10 @@ async function handleToolchainRead(request: Request, env: Env, ctx: ExecutionCon
   try {
     await verifyAccessJwt(request.headers.get(ACCESS_JWT_HEADER), env.ACCESS_TEAM_DOMAIN, env.ACCESS_AUD);
   } catch (err) {
-    if (err instanceof AccessError) return json(401, { error: err.message });
+    if (err instanceof AccessError) {
+      console.warn(`access: ${err.message}`);
+      return json(401, { error: "unauthorized" });
+    }
     throw err;
   }
 

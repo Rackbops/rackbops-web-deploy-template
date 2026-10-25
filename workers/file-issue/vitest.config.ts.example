@@ -17,6 +17,7 @@ export default defineConfig({
           GITHUB_CONTENTS_TOKEN: "test-github-contents-token",
           ACCESS_TEAM_DOMAIN: "test-team.cloudflareaccess.com",
           ACCESS_AUD: "test-aud-value",
+          ALLOWED_EMAILS: "operator@example.test",
         },
       },
     }),

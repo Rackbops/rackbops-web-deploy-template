@@ -105,6 +105,71 @@ describe("Worker fetch handler (#638)", () => {
     expect(res.status).toBe(401);
   });
 
+  it("403s a valid JWT with no email claim (a service token) -- mutation guard: remove the ALLOWED_EMAILS check and this fails", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    const githubCalls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === certsUrl()) return new Response(jwksResponseBody, { status: 200 });
+        githubCalls.push(url);
+        return new Response("should never be reached", { status: 500 });
+      }),
+    );
+    const token = await signToken({ email: null });
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      req("/api/file-issue", {
+        method: "POST",
+        headers: { "content-type": "application/json", "Cf-Access-Jwt-Assertion": token },
+        body: JSON.stringify(VALID_BODY),
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(403);
+    expect(githubCalls).toEqual([]);
+  });
+
+  it("403s a valid JWT whose email is not allowed, and accepts an allowed one in a different case", async () => {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    const githubCalls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === certsUrl()) return new Response(jwksResponseBody, { status: 200 });
+        githubCalls.push(url);
+        if (url.includes("/search/issues")) return new Response(JSON.stringify({ items: [] }), { status: 200 });
+        return new Response(JSON.stringify({ number: 7, html_url: "https://github.com/<OWNER>/<REPO>/issues/7" }), { status: 201 });
+      }),
+    );
+    const post = async (email: string) => {
+      const token = await signToken({ email });
+      const ctx = createExecutionContext();
+      const res = await worker.fetch(
+        req("/api/file-issue", {
+          method: "POST",
+          headers: { "content-type": "application/json", "Cf-Access-Jwt-Assertion": token },
+          body: JSON.stringify(VALID_BODY),
+        }),
+        env,
+        ctx,
+      );
+      await waitOnExecutionContext(ctx);
+      return res;
+    };
+
+    const denied = await post("someone-else@example.test");
+    expect(denied.status).toBe(403);
+    expect(githubCalls).toEqual([]);
+
+    const allowed = await post("Operator@Example.Test");
+    expect(allowed.status).toBe(201);
+  });
+
   it("400s when the title is outside the allowlist -- mutation guard: remove the title-prefix check and this fails", async () => {
     const { jwksResponseBody, signToken } = await makeAccessFixture();
     vi.stubGlobal(
@@ -280,7 +345,8 @@ describe("Worker fetch handler (#638)", () => {
     );
   });
 
-  it("502s, naming the shape problem, when the dedupe search returns a 200 without an items array -- mutation guard: drop the check in findExistingIssue and this fails", async () => {
+  it("502s with the generic body, and logs the shape problem, when the dedupe search returns a 200 without an items array -- mutation guard: drop the check in findExistingIssue and this fails", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { jwksResponseBody, signToken } = await makeAccessFixture();
     vi.stubGlobal(
       "fetch",
@@ -305,12 +371,15 @@ describe("Worker fetch handler (#638)", () => {
     );
     await waitOnExecutionContext(ctx);
     expect(res.status).toBe(502);
+    expect(await res.text()).toBe(JSON.stringify({ error: "upstream" }));
     // Without the check the failure is still a GitHubError (the outer catch wraps a TypeError),
     // but its message is a JS engine's "Cannot read properties of undefined" -- not this one.
-    expect(await res.json()).toEqual({ error: "GitHub search returned an unexpected shape" });
+    expect(warnSpy).toHaveBeenCalledWith("github: GitHub search returned an unexpected shape");
+    warnSpy.mockRestore();
   });
 
   it("502s, not a 200 existing:true with no url, when a matching search entry lacks fields -- mutation guard: weaken findExistingIssue's check to Array.isArray and this fails", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { jwksResponseBody, signToken } = await makeAccessFixture();
     vi.stubGlobal(
       "fetch",
@@ -338,7 +407,9 @@ describe("Worker fetch handler (#638)", () => {
     );
     await waitOnExecutionContext(ctx);
     expect(res.status).toBe(502);
-    expect(await res.json()).toEqual({ error: "GitHub search returned an unexpected shape" });
+    expect(await res.text()).toBe(JSON.stringify({ error: "upstream" }));
+    expect(warnSpy).toHaveBeenCalledWith("github: GitHub search returned an unexpected shape");
+    warnSpy.mockRestore();
   });
 
   it("creates the issue and returns 201 when no existing match is found", async () => {
@@ -383,7 +454,8 @@ describe("Worker fetch handler (#638)", () => {
     expect(await res.json()).toEqual({ number: 702, url: "https://github.com/<OWNER>/<REPO>/issues/702" });
   });
 
-  it("502s with the reason when GitHub itself fails (e.g. rate-limited)", async () => {
+  it("502s with a generic body when GitHub itself fails (e.g. rate-limited) -- the reason goes to console.warn, never the response -- mutation guard: put err.message back and this fails", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { jwksResponseBody, signToken } = await makeAccessFixture();
     vi.stubGlobal(
       "fetch",
@@ -410,8 +482,74 @@ describe("Worker fetch handler (#638)", () => {
     );
     await waitOnExecutionContext(ctx);
     expect(res.status).toBe(502);
-    const data = (await res.json()) as { error: string };
-    expect(data.error).toContain("rate limit");
+    const text = await res.text();
+    expect(text).toBe(JSON.stringify({ error: "upstream" }));
+    expect(text).not.toContain("rate limit");
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("rate limit"));
+    warnSpy.mockRestore();
+  });
+
+  // --- generic error bodies: the 401/502 sites echo nothing from the underlying error --
+  it("a missing JWT header and an invalid JWT both 401 with the identical generic body -- mutation guard: put err.message back in either 401 site and this fails", async () => {
+    const missingHeaderCtx = createExecutionContext();
+    const missingHeaderRes = await worker.fetch(
+      req("/api/file-issue", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(VALID_BODY),
+      }),
+      env,
+      missingHeaderCtx,
+    );
+    await waitOnExecutionContext(missingHeaderCtx);
+    expect(missingHeaderRes.status).toBe(401);
+    const missingHeaderText = await missingHeaderRes.text();
+
+    const { jwksResponseBody } = await makeAccessFixture();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === certsUrl()) return new Response(jwksResponseBody, { status: 200 });
+        return new Response("unexpected fetch in this test: " + url, { status: 500 });
+      }),
+    );
+    const invalidJwtCtx = createExecutionContext();
+    const invalidJwtRes = await worker.fetch(
+      req("/api/file-issue", {
+        method: "POST",
+        headers: { "content-type": "application/json", "Cf-Access-Jwt-Assertion": "not-a-real-jwt" },
+        body: JSON.stringify(VALID_BODY),
+      }),
+      env,
+      invalidJwtCtx,
+    );
+    await waitOnExecutionContext(invalidJwtCtx);
+    expect(invalidJwtRes.status).toBe(401);
+    const invalidJwtText = await invalidJwtRes.text();
+
+    expect(missingHeaderText).toBe(JSON.stringify({ error: "unauthorized" }));
+    expect(invalidJwtText).toBe(JSON.stringify({ error: "unauthorized" }));
+    expect(missingHeaderText).toBe(invalidJwtText);
+  });
+
+  it("logs the JWT-validation detail to console.warn without ever putting it in the response", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      req("/api/file-issue", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(VALID_BODY),
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(401);
+    expect(await res.text()).toBe(JSON.stringify({ error: "unauthorized" }));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("no Cf-Access-Jwt-Assertion header"));
+    warnSpy.mockRestore();
   });
 
   it("400s on a malformed JSON body", async () => {
