@@ -29,6 +29,7 @@ cd "$STACK_DIR" || exit 1
 env_value() {
   local v
   v="$(grep -E "^$1=" .env 2>/dev/null | cut -d= -f2- || true)"
+  v="${v%$'\r'}"   # a CRLF .env would otherwise leave the \r after the closing quote
   if [[ "$v" =~ ^\"(.*)\"$ ]] || [[ "$v" =~ ^\'(.*)\'$ ]]; then v="${BASH_REMATCH[1]}"; fi
   printf '%s' "$v"
 }

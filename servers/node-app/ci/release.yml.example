@@ -31,9 +31,10 @@ permissions:
   contents: read
   packages: write
 
-# One release at a time, queued not cancelled: the :latest decision below reads the tag list at
-# job start, so two overlapping builds could otherwise finish out of order and leave :latest on
-# the older one.
+# One release at a time: the :latest decision below reads the tag list at job start, so two
+# overlapping builds could otherwise finish out of order and leave :latest on the older one.
+# GitHub keeps only one waiting run per group, so tags pushed in quick succession can skip a
+# middle build; re-run it with workflow_dispatch if so.
 concurrency:
   group: release
   cancel-in-progress: false

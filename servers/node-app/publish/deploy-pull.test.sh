@@ -215,6 +215,15 @@ if grep -qx 'stdin=a=b"c' "$login_log"; then pass "case7: an unquoted token (wit
 if grep -qx 'args=login ghcr.io -u bob --password-stdin' "$login_log"; then pass "case7: REGISTRY defaults to ghcr.io"; else fail "case7: login args were: $(cat "$login_log")"; fi
 rm -rf "$stack" "$shim_dir"; rm -f "$sut" "$log" "$login_log"
 
+# ---------------------------------------------------------------------------
+echo "=== Case 8: a CRLF .env still unquotes ==="
+stack="$(make_stack)"; sut="$(make_sut "$stack")"; shim_dir="$(make_docker_shim)"; log="$(mktemp)"; login_log="$(mktemp)"
+printf 'REGISTRY_TOKEN="tok"\r\n' >> "$stack/.env"
+output="$(PATH="$shim_dir:$PATH" DOCKER_CALL_LOG="$log" LOGIN_LOG="$login_log" WANT_ID="sha256:abc" \
+  CONTAINER_ID="c1" HAVE_ID="sha256:abc" bash "$sut" 2>&1)"
+if grep -qx 'stdin=tok' "$login_log"; then pass "case8: CRLF-terminated quoted token is unquoted"; else fail "case8: login stdin was: $(cat "$login_log")"; fi
+rm -rf "$stack" "$shim_dir"; rm -f "$sut" "$log" "$login_log"
+
 echo
 echo "$pass_count passed, $fail_count failed"
 [[ $fail_count -eq 0 ]]
