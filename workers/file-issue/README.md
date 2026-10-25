@@ -125,7 +125,8 @@ and 403 bodies keep their messages: they describe the caller's own request.
   `<OWNER>/<STORE_REPO>` (the repo holding the data files), `<STORE_DIR>` (the directory in it),
   `<STANDARD_REPO>` (the repo holding the one hardcoded standard file), `<STANDARD_PATH>` (its
   path), and `<FEATURE>` (the route prefix segment, e.g. `toolchain` -> `/api/toolchain/*`) in
-  `wrangler.toml`'s two extra routes and `src/index.ts`'s `TOOLCHAIN_PREFIX` constant. Not using
+  `wrangler.toml`'s two extra routes, `src/index.ts`'s `TOOLCHAIN_PREFIX` constant and the
+  `console.warn` log prefixes in that file's read-route handlers. Not using
   the read routes at all? Delete `src/toolchain.ts`, the two `/api/<FEATURE>/*` route lines, the
   toolchain-related imports/`Env` field/functions in `src/index.ts` and `src/github.ts`, and
   `test/toolchain.test.ts`.
@@ -154,6 +155,12 @@ pulls in a `sharp<0.35.4` (high-severity advisory) via `miniflare`'s dev-time im
 whether it's still needed) rather than dropping it as unexplained boilerplate.
 
 ## Read routes (`/api/<FEATURE>/*`, optional)
+
+**Who may read.** The read routes require a valid Access JWT but, unlike `POST /api/file-issue`,
+do **not** check `ALLOWED_EMAILS`: any principal the Access application admits (including a
+service token) can read what they serve. That matches `tools-site/worker`. If your Access
+application admits more people than should see the private repo's data, add the same
+`isAllowedEmail` check to the GET handler.
 
 `src/toolchain.ts.example` + the GET dispatch in `src/index.ts.example` add four more `GET`
 routes on this **same** Worker, behind the **same** Access application and hostname(s) as

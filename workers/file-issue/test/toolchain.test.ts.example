@@ -265,6 +265,61 @@ describe("Worker GET /api/<FEATURE>/* read routes (#680)", () => {
     expect(text).not.toContain("documentation_url");
   });
 
+  it("manifest and sidecar 502 with the fixed body and log the reason -- mutation guard: put err.message in either body and this fails", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    stubFetch(jwksResponseBody, {
+      [STORE_CONTENTS_API]: () => new Response(JSON.stringify({ message: "secret-manifest-reason" }), { status: 500 }),
+      [EXAMPLE_HOST_SIDECAR_API]: () => new Response(JSON.stringify({ message: "secret-sidecar-reason" }), { status: 500 }),
+    });
+    const token = await signToken();
+
+    const cases: [string, string][] = [
+      ["/api/<FEATURE>/manifest", "secret-manifest-reason"],
+      ["/api/<FEATURE>/sidecar/example-host", "secret-sidecar-reason"],
+    ];
+    for (const [path, reason] of cases) {
+      const ctx = createExecutionContext();
+      const res = await worker.fetch(authedReq(path, token), env, ctx);
+      await waitOnExecutionContext(ctx);
+      expect(res.status, path).toBe(502);
+      const text = await res.text();
+      expect(text, path).toBe(JSON.stringify({ error: "upstream" }));
+      expect(text, path).not.toContain(reason);
+      expect(warnSpy, path).toHaveBeenCalledWith(expect.stringContaining(reason));
+    }
+    warnSpy.mockRestore();
+  });
+
+  it("filed logs the GitHub failure while still degrading to issues:null", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    stubFetch(jwksResponseBody, {
+      [`${SEARCH_API_PREFIX}?q=${encodeURIComponent('repo:<STANDARD_REPO> is:issue is:open "<TITLE_PREFIX>" in:title')}&per_page=100`]:
+        () => new Response(JSON.stringify({ message: "Bad credentials" }), { status: 401 }),
+    });
+    const token = await signToken();
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(authedReq("/api/<FEATURE>/filed", token), env, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(res.status).toBe(200);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("Bad credentials"));
+    warnSpy.mockRestore();
+  });
+
+  it("a GET route 401 carries the fixed body, never the JWT failure detail", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(req("/api/<FEATURE>/standard"), env, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(401);
+    expect(await res.text()).toBe(JSON.stringify({ error: "unauthorized" }));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("no Cf-Access-Jwt-Assertion header"));
+    warnSpy.mockRestore();
+  });
+
   it("a second call within the cache window does not hit GitHub again -- mutation guard: put before verify and this fails", async () => {
     const { jwksResponseBody, signToken } = await makeAccessFixture();
     const { calls } = stubFetch(jwksResponseBody, {

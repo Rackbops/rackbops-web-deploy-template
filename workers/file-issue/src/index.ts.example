@@ -169,7 +169,7 @@ async function buildSidecarResult(env: Env, host: string): Promise<RouteResult> 
     };
   } catch (err) {
     if (err instanceof GitHubError) {
-      console.warn(`<FEATURE> sidecar: ${err.message} (status ${err.status})`);
+      console.warn(`<FEATURE> sidecar/${host}: ${err.message} (status ${err.status})`);
       return { response: json(502, { error: "upstream" }), cacheable: false };
     }
     throw err;
@@ -188,6 +188,9 @@ async function buildFiledResult(env: Env, generated: string): Promise<RouteResul
       // hiccup. NOT cached: `cacheable: false` here (not inferred from the 200 status) is what
       // keeps this degraded response from being served for the next 60s once a real search
       // starts succeeding again.
+      // The reason goes to the log only (the body stays the fixed degraded shape), so a token
+      // that expired reads as a cause, not as "no issues".
+      console.warn(`<FEATURE> filed: ${err.message} (status ${err.status})`);
       const degraded: FiledSnapshot = { schemaVersion: 1, generated, issues: null };
       return { response: json(200, degraded), cacheable: false };
     }
