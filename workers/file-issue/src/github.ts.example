@@ -5,13 +5,14 @@
  * KNOWN, ACCEPTED RACE: the search-then-create sequence below is not atomic. Two requests for
  * the same finding, close enough together, could both see "not found" and both create an
  * issue -- and GitHub's search index itself can lag a just-created issue by a few seconds, so
- * even a single caller clicking twice in rapid succession isn't fully immune. This Worker has
- * exactly one authenticated operator (Access-gated to the trusted-users policy) filing from one
- * page with no automated retry loop, so the realistic collision rate is effectively zero, and
- * the cost of a rare duplicate (a second `<TITLE_PREFIX>...` issue, trivially spotted and closed by
- * a human, per #638's own acceptance step) is far below what a Durable Object or KV-based lock
- * would cost to build and maintain for a stretch feature. Revisit if this Worker ever gets a
- * second caller or an automated trigger.
+ * even a single caller clicking twice in rapid succession isn't fully immune. The callers are
+ * the allow-listed human filers (`ALLOWED_EMAILS` in wrangler.toml), each clicking "File now" on
+ * one page with no automated retry loop, so a collision needs two of them to file the same
+ * action within the search-index lag. That is rare, and the cost of a duplicate (a second
+ * `<TITLE_PREFIX>...` issue, trivially spotted and closed by a human, per #638's own acceptance
+ * step) is far below what a Durable Object or KV-based lock would cost to build and maintain for
+ * a stretch feature. Revisit if this Worker ever gets an automated caller or a retry loop: that,
+ * not another human filer, is what would make a lock worth it.
  */
 
 export class GitHubError extends Error {

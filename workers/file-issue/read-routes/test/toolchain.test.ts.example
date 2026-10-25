@@ -377,3 +377,80 @@ describe("Worker GET /api/<FEATURE>/* read routes (#680)", () => {
     expect(text).not.toContain(env.GITHUB_CONTENTS_TOKEN);
   });
 });
+
+// --- a filing drops the cached `filed` list ----------------------------------------------------
+describe("POST /api/file-issue and the cached filed list", () => {
+  const FILED_SEARCH_API = `${SEARCH_API_PREFIX}?q=${encodeURIComponent('repo:<STANDARD_REPO> is:issue is:open "<TITLE_PREFIX>" in:title')}&per_page=100`;
+
+  beforeEach(async () => {
+    _resetJwksCacheForTests();
+    await caches.default.delete(new Request("https://<HOSTNAME_1>/api/<FEATURE>/filed"));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  async function filedSearchesAroundAFiling(): Promise<number> {
+    const { jwksResponseBody, signToken } = await makeAccessFixture();
+    let filedSearchCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === certsUrl()) return new Response(jwksResponseBody, { status: 200 });
+        if (url === FILED_SEARCH_API) {
+          filedSearchCalls += 1;
+          return new Response(JSON.stringify({ items: [] }), { status: 200 });
+        }
+        if (url.startsWith(SEARCH_API_PREFIX)) return new Response(JSON.stringify({ items: [] }), { status: 200 });
+        if (url === "https://api.github.com/repos/<OWNER>/<REPO>/issues" && init?.method === "POST") {
+          return new Response(JSON.stringify({ number: 9, html_url: "https://github.com/<OWNER>/<REPO>/issues/9" }), {
+            status: 201,
+          });
+        }
+        return new Response("unexpected fetch in this test: " + url, { status: 500 });
+      }),
+    );
+    const token = await signToken();
+    const read = async () => {
+      const ctx = createExecutionContext();
+      const res = await worker.fetch(authedReq("/api/<FEATURE>/filed", token), env, ctx);
+      await waitOnExecutionContext(ctx);
+      expect(res.status).toBe(200);
+    };
+
+    await read(); // primes the cache
+    await read(); // served from it: no second search
+    expect(filedSearchCalls).toBe(1);
+
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      req("/api/file-issue", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "Sec-Fetch-Site": "same-origin",
+          "Cf-Access-Jwt-Assertion": token,
+        },
+        body: JSON.stringify({
+          repo: "<OWNER>/<REPO>",
+          title: "<TITLE_PREFIX>upgrade Python on MILE to 3.14",
+          body: "Installed: 3.12.10 on MILE",
+          labels: ["chore", "priority: low"],
+        }),
+      }),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(201);
+    await read();
+    return filedSearchCalls;
+  }
+
+  it("a 201 filing drops the cached filed list, so the next GET searches GitHub again -- mutation guard: remove the cache delete and this fails", async () => {
+    expect(await filedSearchesAroundAFiling()).toBe(2);
+  });
+});

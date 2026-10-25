@@ -106,6 +106,14 @@ async function buildStandardResult(env: ReadRoutesEnv): Promise<RouteResult> {
   }
 }
 
+/** Drops the edge-cached `filed` response. `POST /api/file-issue` calls this (through
+ * `ctx.waitUntil`) after a 201, because `filed` is cached for 60s and a reload inside that window
+ * would still offer "File now" for the action just filed. `requestUrl` is the POST's own URL: the
+ * cache key is the same-origin `filed` URL, which is how `handleReadRoute` keys it. */
+export function dropFiledCache(requestUrl: string): Promise<boolean> {
+  return caches.default.delete(new Request(new URL(`${READ_ROUTES_PREFIX}filed`, requestUrl)));
+}
+
 /** `GET /api/<FEATURE>/{manifest,sidecar/<host>,filed,standard}` (Epic #667, E2/C1). Order,
  * exactly, per request: route/method -> Access JWT verify (401, same as the POST /api/file-issue route in index.ts) ->
  * `caches.default` lookup -> upstream -> `Cache-Control: max-age=60` on a cacheable result ->

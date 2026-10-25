@@ -48,7 +48,7 @@ function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
-async function handleFileIssue(request: Request, env: Env): Promise<Response> {
+async function handleFileIssue(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
   if (request.method !== "POST") {
     return new Response(JSON.stringify({ error: "method not allowed" }), {
       status: 405,
@@ -77,8 +77,9 @@ async function handleFileIssue(request: Request, env: Env): Promise<Response> {
     throw err;
   }
 
-  // Authenticated is not authorized: the Access app admits more than the one operator this
-  // endpoint (and its dedupe-race reasoning) is built for. A service token has no `email`.
+  // Authenticated is not authorized: the Access app admits more principals than the allow-listed
+  // human filers this endpoint (and its dedupe-race reasoning, github.ts) is built for. A
+  // service token has no `email`.
   if (!isAllowedEmail(claims.email, env.ALLOWED_EMAILS)) {
     console.warn("access: principal not in ALLOWED_EMAILS");
     return json(403, { error: "forbidden" });
@@ -116,6 +117,8 @@ async function handleFileIssue(request: Request, env: Env): Promise<Response> {
       return json(200, { number: existing.number, url: existing.url, existing: true });
     }
     const created = await createIssue(validated.repo, validated, env.GITHUB_TOKEN);
+    // Read-routes add-on (read-routes/README.md): drop the edge-cached `filed` list here, so a
+    // reload inside its 60s window does not offer "File now" for the action just filed.
     return json(201, { number: created.number, url: created.url });
   } catch (err) {
     if (err instanceof GitHubError) {
@@ -127,10 +130,10 @@ async function handleFileIssue(request: Request, env: Env): Promise<Response> {
 }
 
 export default {
-  async fetch(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/api/file-issue") {
-      return handleFileIssue(request, env);
+      return handleFileIssue(request, env, ctx);
     }
     return json(404, { error: "not found" });
   },
