@@ -75,7 +75,8 @@ The deployments this template was extracted from, and what each one has proven, 
   repo, so that pointer is for the maintainer's reference and isn't needed to use this template.
   That's an app-internal concern, orthogonal to this repo's deploy concern.
 - **No lint/test CI on this repo itself** — the `.example` files are copied and adapted per
-  consumer, who owns linting/testing their own copy (as `tools-site` does — its `publish.ps1`, the
+  consumer, who owns linting/testing their own copy (the Worker ships an opt-in pull-request workflow
+  example, `workers/file-issue/ci/worker.yml.example`, that runs nowhere here; as `tools-site` does — its `publish.ps1`, the
   real file this repo's `publish-scp.ps1.example` was genericized from, is checked by `Tooling`'s CI,
   not by anything here). The one workflow in `.github/workflows/` is the
   maintainer's Discord push notifier: repo plumbing, not template content. If you clone this repo

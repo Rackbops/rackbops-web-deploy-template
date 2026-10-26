@@ -31,6 +31,7 @@ from being *delivered*, only from being *read* by the calling page's JS).
 | [`src/github.ts.example`](src/github.ts.example) | The GitHub Search + REST calls: exact-title dedupe, then create. |
 | [`test/*.test.ts.example`](test/) + [`test/support.ts.example`](test/support.ts.example) | The real test suite (JWT verification, input validation, the full handler end to end) -- runs inside the actual Workers runtime via `@cloudflare/vitest-pool-workers`, not a Node approximation. |
 | [`package.json.example`](package.json.example) | Dependencies (`jose`) and devDependencies (`wrangler`, `vitest`, `@cloudflare/vitest-pool-workers`, `typescript`, `eslint`). Not committed as `package.json` here -- see "No lint/test CI on this repo" in the repo `README.md`. |
+| [`ci/worker.yml.example`](ci/worker.yml.example) | A `pull_request` workflow: `npm ci`, then `npm run build`, `npm run lint`, `npm test` in your Worker directory. Copy to `.github/workflows/worker.yml` and fill its `<PLACEHOLDERS>`. |
 | [`wrangler.toml.example`](wrangler.toml.example) | Worker name, routes (two hostnames -- delete the second if you only have one), and the three non-secret `[vars]`. |
 | [`tsconfig.json.example`](tsconfig.json.example), [`eslint.config.js.example`](eslint.config.js.example), [`vitest.config.ts.example`](vitest.config.ts.example), [`worker-configuration.d.ts.example`](worker-configuration.d.ts.example) | Toolchain config -- copy as-is, drop `.example`. |
 
@@ -136,7 +137,8 @@ The test suite is real and runs inside the actual Workers runtime (`@cloudflare/
 not a Node approximation) -- deliberate for a write path with a secret: `Request`/`Response`/
 `fetch`/WebCrypto behave exactly as they will in production. After copying and adapting the
 files above: `npm install` (first time; commit the lockfile it writes) or `npm ci` (once one exists), then `npm run build` (typecheck), `npm run lint`, `npm test`. Wire these
-into **your own** repo's CI -- this template repo runs none of it itself.
+into **your own** repo's CI -- this template repo runs none of it itself. [`ci/worker.yml.example`](ci/worker.yml.example)
+is a ready-made pull-request workflow that runs exactly those three (copy it to `.github/workflows/worker.yml`).
 
 One known transitive dependency issue at time of extraction: `@cloudflare/vitest-pool-workers`
 pulls in a `sharp<0.35.4` (high-severity advisory) via `miniflare`'s dev-time image tooling.

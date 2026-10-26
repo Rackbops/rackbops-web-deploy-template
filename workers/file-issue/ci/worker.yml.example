@@ -1,0 +1,65 @@
+name: worker
+
+# Typecheck, lint and test the file-issue Worker on every pull request. Copy to
+# .github/workflows/worker.yml and fill the <PLACEHOLDERS>.
+#
+# <WORKER_DIR> is where you copied the Worker (for example `worker`). It must hold package.json
+# AND the package-lock.json that `npm install` wrote (commit the lockfile): the job uses
+# `npm ci`, which refuses to run without one. It runs the three scripts the Worker's own
+# package.json defines (build = tsc --noEmit, lint, test), so a change to a script changes this
+# check with no edit here.
+#
+# Runner: ubuntu-latest as written, which is right for a PUBLIC repo. A PRIVATE repo with a
+# self-hosted pool swaps it for its own labels -- never on a public repo, where a fork PR would
+# run its own code on your runner. When you swap, keep the job-level timeout-minutes: a pool
+# slot is shared, and GitHub's default is 360 minutes.
+#
+# `npm install` on a machine with an older npm can write a lockfile that a newer npm's `npm ci`
+# rejects (or the reverse). <NPM_VERSION> pins the job to the npm that wrote yours; the scaffold's
+# package.json needs npm 11.19 or later, so use `11.19.0` unless your lockfile came from a newer
+# one. The install is plain `npm ci`, not `npm ci --strict-allow-scripts`: package.json's
+# `allowScripts` approvals name exact versions (`workerd@1.20260911.1`), so a fresh lockfile that
+# resolves a newer esbuild or workerd would fail strict mode until you re-approve it. Add the flag
+# once you keep those approvals current (Rackbops/Tooling does, in its own CI).
+#
+# Reference consumer: the same three scripts run on every Rackbops/Tooling pull request for
+# its `tools-site/worker`, through a reusable lane that is not shared with this template.
+on:
+  pull_request:
+    paths:
+      - "<WORKER_DIR>/**"
+      - ".github/workflows/worker.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  worker:
+    runs-on: ubuntu-latest   # <-- your own labels on a PRIVATE repo with a self-hosted pool, see above
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: <WORKER_DIR>
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: <WORKER_DIR>/package-lock.json
+
+      - name: Install npm
+        run: npm install --global npm@<NPM_VERSION>
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run build
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
