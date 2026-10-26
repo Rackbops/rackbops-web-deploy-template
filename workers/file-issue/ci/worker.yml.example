@@ -5,7 +5,9 @@ name: worker
 #
 # <WORKER_DIR> is where you copied the Worker (for example `worker`). It must hold package.json
 # AND the package-lock.json that `npm install` wrote (commit the lockfile): the job uses
-# `npm ci`, which refuses to run without one. It runs the three scripts the Worker's own
+# `npm ci`, which refuses to run without one. If the Worker sits at the repo root, replace the
+# `paths:` entry with `"**"` (a `./**` pattern matches nothing, so the check would never run) and
+# drop the `working-directory` default. It runs the three scripts the Worker's own
 # package.json defines (build = tsc --noEmit, lint, test), so a change to a script changes this
 # check with no edit here.
 #
