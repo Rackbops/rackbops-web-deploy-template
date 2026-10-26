@@ -77,7 +77,8 @@ The deployments this template was extracted from, and what each one has proven, 
 - **No lint/test CI on this repo itself** — the `.example` files are copied and adapted per
   consumer, who owns linting/testing their own copy (as `tools-site` does — its `publish.ps1`, the
   real file this repo's `publish-scp.ps1.example` was genericized from, is checked by `Tooling`'s CI,
-  not by anything here). The one workflow in `.github/workflows/` is the
+  not by anything here). The Worker ships an opt-in pull-request workflow example,
+  `workers/file-issue/ci/worker.yml.example`, that a consumer copies into their own repo. The one workflow in `.github/workflows/` is the
   maintainer's Discord push notifier: repo plumbing, not template content. If you clone this repo
   rather than cherry-picking files, delete it — it calls a shared workflow with a webhook secret
   you don't have, and skips green when that secret is unset.
