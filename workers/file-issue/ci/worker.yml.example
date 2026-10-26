@@ -1,6 +1,6 @@
 name: worker
 
-# Typecheck, lint and test the file-issue Worker on every pull request. Copy to
+# Typecheck, lint and test the file-issue Worker on each pull request that touches it. Copy to
 # .github/workflows/worker.yml and fill the <PLACEHOLDERS>.
 #
 # <WORKER_DIR> is where you copied the Worker (for example `worker`). It must hold package.json
@@ -16,8 +16,8 @@ name: worker
 #
 # `npm install` on a machine with an older npm can write a lockfile that a newer npm's `npm ci`
 # rejects (or the reverse). <NPM_VERSION> pins the job to the npm that wrote yours; the scaffold's
-# package.json needs npm 11.19 or later, so use `11.19.0` unless your lockfile came from a newer
-# one. The install is plain `npm ci`, not `npm ci --strict-allow-scripts`: package.json's
+# package.json crashed npm 10.9.4 when this was checked, and `11.19.0` is the version it was
+# verified with, so use `11.19.0` unless your lockfile came from a newer one. The install is plain `npm ci`, not `npm ci --strict-allow-scripts`: package.json's
 # `allowScripts` approvals name exact versions (`workerd@1.20260911.1`), so a fresh lockfile that
 # resolves a newer esbuild or workerd would fail strict mode until you re-approve it. Add the flag
 # once you keep those approvals current (Rackbops/Tooling does, in its own CI).
