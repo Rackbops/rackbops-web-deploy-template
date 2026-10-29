@@ -54,7 +54,7 @@ services:
     # box (see the server README's Updating). If your repo runs Renovate, its docker-compose manager
     # can raise that bump PR, as long as its config reads `compose*.yaml.example`
     # (Rackbops/renovate-config#4 adds that pattern to the Rackbops org preset).
-    image: cloudflare/cloudflared:2026.10.1
+    image: cloudflare/cloudflared:2026.10.3
     command: tunnel --no-autoupdate run
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
