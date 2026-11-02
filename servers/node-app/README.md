@@ -251,13 +251,13 @@ nothing verifies a `cloudflared` you didn't choose.
     reaches a running stack only when the consumer's own committed compose file changes and that
     change is redeployed to the box.
   - **Commit the compose file in the consumer repo.** Renovate can only raise a bump PR for a
-    file it can read in a repo. A compose file that exists only on the host never gets a bump PR:
-    that was Meals for Two's case, whose VM stacks started on this template's old pin and had to be
-    bumped by hand before the files were committed.
+    file it can read in a repo. A compose file that exists only on the host (a stack genericized from
+    this template and never committed) never gets a bump PR, so its pin stays where it started
+    until someone edits the box's copy by hand.
   - **Pull the sidecar in your own deploy step.** `deploy-pull.sh` only pulls and recreates the
     **app** service. A deploy step that runs `compose pull` on the app alone never refreshes the
-    sidecar, so name it too (`docker compose --profile tunnel pull app cloudflared`), then
-    `up -d` as above.
+    sidecar, so name it too (`docker compose --profile tunnel pull <app> cloudflared`, with your
+    app's service name), then `docker compose --profile tunnel up -d` to recreate both.
 - **`.env`** → `docker compose --profile tunnel up -d` (recreates the app **and** the profiled
   cloudflared sidecar; a plain `up -d` wouldn't reach the sidecar, so a changed
   `CLOUDFLARE_TUNNEL_TOKEN` wouldn't apply).
